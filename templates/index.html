@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartTutor – CSIT5900</title>
+<style>
+  /* ---------- Reset & Variables ---------- */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #f9fafb;
+    --surface:   #ffffff;
+    --border:    #e5e7eb;
+    --text:      #111827;
+    --text-sec:  #6b7280;
+    --primary:   #2563eb;
+    --primary-h: #1d4ed8;
+    --user-bg:   #eff6ff;
+    --bot-bg:    #ffffff;
+    --radius:    12px;
+    --shadow:    0 1px 3px rgba(0,0,0,.08);
+    --max-w:     820px;
+  }
+
+  html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  /* ---------- Layout ---------- */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: var(--max-w);
+    margin: 0 auto;
+  }
+
+  /* --- Header --- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .header h1 {
+    font-size: 17px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header h1 .icon { font-size: 22px; }
+  .header .clear-btn {
+    font-size: 13px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-sec);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .header .clear-btn:hover { background: #f3f4f6; color: var(--text); }
+
+  /* --- Chat area --- */
+  .chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Welcome screen */
+  .welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    gap: 24px;
+    text-align: center;
+  }
+  .welcome-icon { font-size: 48px; }
+  .welcome h2 { font-size: 22px; font-weight: 600; }
+  .welcome p  { color: var(--text-sec); font-size: 14px; max-width: 420px; }
+
+  /* Demo buttons grid */
+  .demo-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    max-width: 600px;
+  }
+  .demo-btn {
+    font-size: 13px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: all .15s;
+    max-width: 280px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .demo-btn:hover { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
+  .demo-btn.reject { border-color: #fca5a5; color: #dc2626; }
+  .demo-btn.reject:hover { background: #fef2f2; border-color: #dc2626; }
+
+  /* --- Messages --- */
+  .msg-row {
+    display: flex;
+    gap: 12px;
+    max-width: 100%;
+    animation: fadeIn .25s ease;
+  }
+  .msg-row.user { justify-content: flex-end; }
+  .msg-row.bot  { justify-content: flex-start; }
+
+  .msg-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+  }
+  .msg-row.user .msg-avatar { background: var(--primary); color: #fff; }
+  .msg-row.bot  .msg-avatar { background: #e5e7eb; color: var(--text); }
+
+  .msg-bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 75%;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    box-shadow: var(--shadow);
+  }
+  .msg-row.user .msg-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+  .msg-row.bot  .msg-bubble { background: var(--bot-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* Typing indicator */
+  .typing-dots { display: inline-flex; gap: 4px; padding: 4px 0; }
+  .typing-dots span {
+    width: 7px; height: 7px;
+    background: var(--text-sec);
+    border-radius: 50%;
+    animation: bounce .6s infinite alternate;
+  }
+  .typing-dots span:nth-child(2) { animation-delay: .15s; }
+  .typing-dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { to { transform: translateY(-6px); opacity: .4; } }
+
+  /* --- Input bar --- */
+  .input-bar {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .input-bar textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    font-size: 14.5px;
+    font-family: inherit;
+    line-height: 1.5;
+    outline: none;
+    min-height: 48px;
+    max-height: 150px;
+    transition: border-color .15s;
+  }
+  .input-bar textarea:focus { border-color: var(--primary); }
+  .input-bar textarea::placeholder { color: #9ca3af; }
+
+  .send-btn {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+    flex-shrink: 0;
+  }
+  .send-btn:hover { background: var(--primary-h); }
+  .send-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* Scrollbar */
+  .chat-area::-webkit-scrollbar { width: 6px; }
+  .chat-area::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <h1><span class="icon">📚</span> SmartTutor</h1>
+    <button class="clear-btn" onclick="clearChat()">New Chat</button>
+  </div>
+
+  <!-- Chat area -->
+  <div class="chat-area" id="chatArea">
+    <!-- Welcome screen (shown when no messages) -->
+    <div class="welcome" id="welcomeScreen">
+      <div class="welcome-icon">🎓</div>
+      <h2>CSIT5900 SmartTutor</h2>
+      <p>Your homework tutoring assistant for math, history, and more. Try a preset question or type your own below.</p>
+      <div class="demo-grid" id="demoGrid"></div>
+    </div>
+  </div>
+
+  <!-- Input bar -->
+  <div class="input-bar">
+    <textarea id="userInput" rows="1" placeholder="Ask a homework question…"
+              onkeydown="handleKey(event)"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send">
+      &#10148;
+    </button>
+  </div>
+</div>
+
+<script>
+// ---------- State ----------
+let isLoading = false;
+
+// ---------- DOM refs ----------
+const chatArea      = document.getElementById('chatArea');
+const welcomeScreen = document.getElementById('welcomeScreen');
+const demoGrid      = document.getElementById('demoGrid');
+const userInput     = document.getElementById('userInput');
+const sendBtn       = document.getElementById('sendBtn');
+
+// ---------- Auto-resize textarea ----------
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 150) + 'px';
+});
+
+// ---------- Load demo buttons ----------
+fetch('/api/demos')
+  .then(r => r.json())
+  .then(demos => {
+    demos.forEach(d => {
+      const btn = document.createElement('button');
+      btn.className = 'demo-btn' + (d.key.includes('reject') ? ' reject' : '');
+      btn.textContent = d.prompt;
+      btn.title = d.prompt;
+      btn.onclick = () => sendMessage(d.prompt);
+      demoGrid.appendChild(btn);
+    });
+  });
+
+// ---------- Send message ----------
+async function sendMessage(text) {
+  if (isLoading) return;
+  const msg = (text || userInput.value).trim();
+  if (!msg) return;
+
+  // Hide welcome screen
+  welcomeScreen.style.display = 'none';
+
+  // Show user bubble
+  appendMessage('user', msg);
+  userInput.value = '';
+  userInput.style.height = 'auto';
+
+  // Show typing indicator
+  const typingEl = showTyping();
+  setLoading(true);
+
+  try {
+    const res  = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    removeTyping(typingEl);
+    appendMessage('bot', data.reply);
+  } catch (err) {
+    removeTyping(typingEl);
+    appendMessage('bot', '[Error] Failed to reach the server.');
+  }
+  setLoading(false);
+}
+
+// ---------- Append message bubble ----------
+function appendMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = 'msg-row ' + role;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.textContent = text;
+
+  if (role === 'user') {
+    row.appendChild(bubble);
+    row.appendChild(avatar);
+  } else {
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+  }
+  chatArea.appendChild(row);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// ---------- Typing indicator ----------
+function showTyping() {
+  const row = document.createElement('div');
+  row.className = 'msg-row bot';
+  row.innerHTML = `
+    <div class="msg-avatar">🤖</div>
+    <div class="msg-bubble">
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+    </div>`;
+  chatArea.appendChild(row);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  return row;
+}
+function removeTyping(el) { el && el.remove(); }
+
+// ---------- Loading state ----------
+function setLoading(v) {
+  isLoading = v;
+  sendBtn.disabled = v;
+}
+
+// ---------- Keyboard shortcut ----------
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+// ---------- Clear chat ----------
+async function clearChat() {
+  await fetch('/api/clear', { method: 'POST' });
+  // Remove all message rows
+  chatArea.querySelectorAll('.msg-row').forEach(el => el.remove());
+  // Show welcome again
+  welcomeScreen.style.display = '';
+}
+</script>
+</body>
+</html>
