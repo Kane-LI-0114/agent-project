@@ -7,7 +7,7 @@ application.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List
+from typing import Any, AsyncGenerator, List
 
 
 class BaseLLMClient(ABC):
@@ -15,8 +15,8 @@ class BaseLLMClient(ABC):
     Abstract base class that every LLM backend must implement.
 
     Subclasses must provide:
-        - chat(messages): Send a list of chat messages and return the
-          assistant's reply as a plain string.
+        - chat(messages)        : one-shot call, returns complete reply string.
+        - chat_stream(messages) : async generator that yields text chunks.
     """
 
     @abstractmethod
@@ -37,3 +37,16 @@ class BaseLLMClient(ABC):
             The assistant's reply content.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def chat_stream(self, messages: List[Any]) -> AsyncGenerator[str, None]:
+        """
+        Send a conversation to the LLM and stream back incremental text chunks.
+
+        Yields
+        ------
+        str
+            A content delta string from the model.
+        """
+        raise NotImplementedError
+        yield  # type: ignore[misc]  # marks this as an async generator

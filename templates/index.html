@@ -273,41 +273,80 @@ fetch('/api/demos')
     });
   });
 
-// ---------- Send message ----------
+// ---------- Send message (streaming) ----------
 async function sendMessage(text) {
   if (isLoading) return;
   const msg = (text || userInput.value).trim();
   if (!msg) return;
 
-  // Hide welcome screen
+  // Hide welcome screen on first message
   welcomeScreen.style.display = 'none';
 
   // Show user bubble
   appendMessage('user', msg);
   userInput.value = '';
   userInput.style.height = 'auto';
-
-  // Show typing indicator
-  const typingEl = showTyping();
   setLoading(true);
 
+  // Create empty streaming bot bubble (typing indicator shown initially)
+  const bubble = appendStreamingBubble();
+  let firstToken = true;
+
   try {
-    const res  = await fetch('/api/chat', {
+    const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg }),
     });
-    const data = await res.json();
-    removeTyping(typingEl);
-    appendMessage('bot', data.reply);
+
+    if (!res.ok || !res.body) {
+      bubble.innerHTML = '<em>[Error] Could not reach the server.</em>';
+      setLoading(false);
+      return;
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE lines: each event is "data: ...\n\n"
+      const events = buffer.split('\n\n');
+      buffer = events.pop(); // keep incomplete trailing chunk
+
+      for (const event of events) {
+        const line = event.trim();
+        if (!line.startsWith('data:')) continue;
+        const raw = line.slice(5).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const { token } = JSON.parse(raw);
+          if (firstToken) {
+            // Replace typing indicator with first real content
+            bubble.textContent = token;
+            firstToken = false;
+          } else {
+            bubble.textContent += token;
+          }
+          chatArea.scrollTop = chatArea.scrollHeight;
+        } catch (_) { /* ignore malformed chunks */ }
+      }
+    }
+    // If we never got a token (empty reply) clear the dots
+    if (firstToken) bubble.textContent = '';
   } catch (err) {
-    removeTyping(typingEl);
-    appendMessage('bot', '[Error] Failed to reach the server.');
+    bubble.innerHTML = '<em>[Error] Request failed.</em>';
   }
+
   setLoading(false);
 }
 
-// ---------- Append message bubble ----------
+// ---------- Append a user message bubble ----------
 function appendMessage(role, text) {
   const row = document.createElement('div');
   row.className = 'msg-row ' + role;
@@ -331,20 +370,27 @@ function appendMessage(role, text) {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-// ---------- Typing indicator ----------
-function showTyping() {
+// ---------- Create an empty streaming bot bubble ----------
+// Returns the bubble <div> DOM element directly.
+// Shows typing dots until sendMessage() writes the first real token.
+function appendStreamingBubble() {
   const row = document.createElement('div');
   row.className = 'msg-row bot';
-  row.innerHTML = `
-    <div class="msg-avatar">🤖</div>
-    <div class="msg-bubble">
-      <div class="typing-dots"><span></span><span></span><span></span></div>
-    </div>`;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = '🤖';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
   chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
-  return row;
+  return bubble;
 }
-function removeTyping(el) { el && el.remove(); }
 
 // ---------- Loading state ----------
 function setLoading(v) {
@@ -363,9 +409,7 @@ function handleKey(e) {
 // ---------- Clear chat ----------
 async function clearChat() {
   await fetch('/api/clear', { method: 'POST' });
-  // Remove all message rows
   chatArea.querySelectorAll('.msg-row').forEach(el => el.remove());
-  // Show welcome again
   welcomeScreen.style.display = '';
 }
 </script>

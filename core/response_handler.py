@@ -11,6 +11,7 @@ LLM client to produce a final response for each user turn.
 from __future__ import annotations
 
 import logging
+from typing import AsyncGenerator
 
 from core.conversation import ConversationManager
 from core.guardrails import check_input, detect_academic_level
@@ -75,3 +76,45 @@ class ResponseHandler:
         # --- Step 4: Store assistant reply ---
         self._conv.add_assistant_message(reply)
         return reply
+
+    async def handle_stream(self, user_input: str) -> AsyncGenerator[str, None]:
+        """
+        Process *user_input* and stream the assistant's response chunk by chunk.
+
+        The guardrail check runs first (non-streaming).  If the input is
+        blocked, the rejection message is yielded as a single chunk.
+        The full assembled reply is stored in conversation history after the
+        stream completes.
+        """
+        # --- Step 1: Code-level guardrail ---
+        is_allowed, rejection_reason = check_input(user_input)
+        if not is_allowed:
+            self._conv.add_user_message(user_input)
+            reply = rejection_reason or "Sorry, I cannot help with that."
+            self._conv.add_assistant_message(reply)
+            yield reply
+            return
+
+        # --- Step 2: Detect academic level ---
+        level = detect_academic_level(user_input)
+        if level:
+            self._conv.academic_level = level
+            logger.info("Academic level set to: %s", level)
+
+        # --- Step 3: Build messages & stream from LLM ---
+        self._conv.add_user_message(user_input)
+        messages = self._conv.get_messages()
+
+        full_reply = ""
+        try:
+            async for chunk in self._llm.chat_stream(messages):
+                full_reply += chunk
+                yield chunk
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.error("LLM stream failed: %s", exc)
+            error_msg = f"[ERROR] Failed to get a response from the LLM: {exc}"
+            full_reply = error_msg
+            yield error_msg
+
+        # --- Step 4: Store the complete assembled reply ---
+        self._conv.add_assistant_message(full_reply)

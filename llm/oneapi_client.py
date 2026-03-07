@@ -8,7 +8,7 @@ they can be swapped via a single configuration toggle.
 
 import asyncio
 import logging
-from typing import Any, List, Optional
+from typing import Any, AsyncGenerator, List, Optional
 
 from openai import AsyncOpenAI, APIConnectionError, RateLimitError, APIStatusError
 
@@ -89,3 +89,20 @@ class OneAPILLMClient(BaseLLMClient):
             f"One API request failed after {MAX_RETRIES} retries. "
             f"Last error: {last_exception}"
         )
+
+    async def chat_stream(self, messages: List[Any]) -> AsyncGenerator[str, None]:
+        """
+        Send *messages* to the One API endpoint and yield content delta chunks
+        as they arrive (streaming mode).
+        """
+        stream = await self._client.chat.completions.create(
+            model=self.config.model_name,
+            messages=messages,  # type: ignore[arg-type]
+            temperature=0.7,
+            max_tokens=2048,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta

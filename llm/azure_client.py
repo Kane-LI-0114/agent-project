@@ -8,7 +8,7 @@ completions. Includes retry logic and comprehensive exception handling.
 
 import asyncio
 import logging
-from typing import Any, List, Optional
+from typing import Any, AsyncGenerator, List, Optional
 
 from openai import AsyncAzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
 
@@ -92,3 +92,21 @@ class AzureLLMClient(BaseLLMClient):
             f"Azure OpenAI request failed after {MAX_RETRIES} retries. "
             f"Last error: {last_exception}"
         )
+
+    async def chat_stream(self, messages: List[Any]) -> AsyncGenerator[str, None]:
+        """
+        Send *messages* to Azure OpenAI and yield content delta chunks as they
+        arrive (streaming mode).  No retry is applied because partial output
+        cannot be replayed cleanly.
+        """
+        stream = await self._client.chat.completions.create(
+            model=self.config.deployment_name,
+            messages=messages,  # type: ignore[arg-type]
+            temperature=0.7,
+            max_tokens=2048,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta

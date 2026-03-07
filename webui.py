@@ -17,12 +17,13 @@ Then open http://localhost:8000 in your browser.
 """
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from config.settings import DEMO_PROMPTS
@@ -66,9 +67,37 @@ class ChatResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """Process a user message and return the assistant's reply."""
+    """Process a user message and return the complete reply (non-streaming)."""
     reply = await handler.handle(req.message)
     return ChatResponse(reply=reply)
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    Process a user message and stream the reply as Server-Sent Events.
+
+    Each event carries a JSON payload:
+        data: {"token": "<chunk>"}\n\n
+    The stream ends with:
+        data: [DONE]\n\n
+    """
+    async def event_generator():
+        async for chunk in handler.handle_stream(req.message):
+            # JSON-encode the chunk so special characters (newlines, quotes)
+            # don't break the SSE framing.
+            payload = json.dumps({"token": chunk}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/clear")
