@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 # Load environment variables from .env file at module import time
 load_dotenv()
 
-
 # --------------------------------------------------------------------------- #
 # API Configuration Models
 # --------------------------------------------------------------------------- #
@@ -25,7 +24,10 @@ class AzureOpenAIConfig(BaseModel):
     api_key: str = Field(default_factory=lambda: os.getenv("AZURE_OPENAI_API_KEY", ""))
     endpoint: str = Field(default_factory=lambda: os.getenv("AZURE_OPENAI_ENDPOINT", ""))
     api_version: str = Field(default_factory=lambda: os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"))
-    deployment_name: str = Field(default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"))
+    deployment_name: str = Field(default_factory=lambda: "gpt-4o")
+    temperature: float = Field(default_factory=lambda: 0.1)
+    max_tokens: int = Field(default_factory=lambda: 4096)
+    stream: bool = Field(default_factory=lambda: True)
 
     def is_configured(self) -> bool:
         """Check whether all mandatory Azure credentials are present."""
@@ -36,7 +38,10 @@ class OneAPIConfig(BaseModel):
     """Configuration for One API (OpenAI-compatible) access."""
     api_key: str = Field(default_factory=lambda: os.getenv("ONEAPI_API_KEY", ""))
     base_url: str = Field(default_factory=lambda: os.getenv("ONEAPI_BASE_URL", ""))
-    model_name: str = Field(default_factory=lambda: os.getenv("ONEAPI_MODEL_NAME", "gpt-4o"))
+    model_name: str = Field(default_factory=lambda: "DeepSeek-V3.2")
+    temperature: float = Field(default_factory=lambda: 0.1)
+    max_tokens: int = Field(default_factory=lambda: 4096)
+    stream: bool = Field(default_factory=lambda: True)
 
     def is_configured(self) -> bool:
         """Check whether all mandatory One API credentials are present."""
@@ -70,7 +75,7 @@ ALLOWED_SUBJECTS: List[str] = MANDATORY_SUBJECTS + OPTIONAL_SUBJECTS
 
 # Maximum number of tokens to retain in conversation history before truncation.
 # This prevents context window overflow while retaining recent dialog.
-MAX_HISTORY_TOKENS: int = 6000
+MAX_HISTORY_TOKENS: int = 20000
 
 # Maximum number of message turns to keep (as a hard limit before token counting)
 MAX_HISTORY_TURNS: int = 40

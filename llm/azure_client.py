@@ -64,8 +64,8 @@ class AzureLLMClient(BaseLLMClient):
                 response = await self._client.chat.completions.create(
                     model=self.config.deployment_name,
                     messages=messages,  # type: ignore[arg-type]
-                    temperature=0.7,
-                    max_tokens=2048,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
                 )
                 content = response.choices[0].message.content
                 return content.strip() if content else ""
@@ -99,11 +99,24 @@ class AzureLLMClient(BaseLLMClient):
         arrive (streaming mode).  No retry is applied because partial output
         cannot be replayed cleanly.
         """
+        if not self.config.stream:
+            response = await self._client.chat.completions.create(
+                model=self.config.deployment_name,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                stream=False,
+            )
+            content = response.choices[0].message.content
+            if content:
+                yield content
+            return
+
         stream = await self._client.chat.completions.create(
             model=self.config.deployment_name,
             messages=messages,  # type: ignore[arg-type]
-            temperature=0.7,
-            max_tokens=2048,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
             stream=True,
         )
         async for chunk in stream:
