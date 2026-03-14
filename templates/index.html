@@ -4,6 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SmartTutor – CSIT5900</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <style>
   /* ---------- Reset & Variables ---------- */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -152,6 +154,38 @@
   .msg-row.user .msg-bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
   .msg-row.bot  .msg-bubble { background: var(--bot-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 
+  .msg-bubble p { margin: 0 0 8px; }
+  .msg-bubble p:last-child { margin-bottom: 0; }
+  .msg-bubble ul, .msg-bubble ol { margin: 6px 0 8px 20px; }
+  .msg-bubble li { margin: 2px 0; }
+  .msg-bubble code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.92em;
+    padding: 1px 5px;
+    border-radius: 6px;
+    background: #f3f4f6;
+  }
+  .msg-bubble pre {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f3f4f6;
+    overflow-x: auto;
+  }
+  .msg-bubble pre code { padding: 0; background: transparent; }
+  .msg-bubble blockquote {
+    margin: 8px 0;
+    padding-left: 10px;
+    border-left: 3px solid var(--border);
+    color: var(--text-sec);
+  }
+  .msg-bubble .katex-display { margin: 10px 0; overflow-x: auto; overflow-y: hidden; }
+  .msg-row.user .msg-bubble code,
+  .msg-row.user .msg-bubble pre {
+    background: rgba(255, 255, 255, .18);
+    color: #fff;
+  }
+
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
   /* Typing indicator */
@@ -242,9 +276,13 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 <script>
 // ---------- State ----------
 let isLoading = false;
+const ENABLE_BOT_MARKDOWN_LATEX = __ENABLE_BOT_MARKDOWN_LATEX__;
 
 // ---------- DOM refs ----------
 const chatArea      = document.getElementById('chatArea');
@@ -252,6 +290,77 @@ const welcomeScreen = document.getElementById('welcomeScreen');
 const demoGrid      = document.getElementById('demoGrid');
 const userInput     = document.getElementById('userInput');
 const sendBtn       = document.getElementById('sendBtn');
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+
+function protectMathSegments(rawText) {
+  const segments = [];
+  const token = idx => `@@MATH_SEGMENT_${idx}@@`;
+  let text = rawText || '';
+
+  const patterns = [
+    /\$\$[\s\S]+?\$\$/g,
+    /\\\[[\s\S]+?\\\]/g,
+    /\\\([\s\S]+?\\\)/g,
+    /(^|[^\\])\$([^\n$]|\\\$)+\$/g,
+  ];
+
+  patterns.forEach((pattern, index) => {
+    if (index === 3) {
+      text = text.replace(pattern, (match, prefix) => {
+        const math = match.slice(prefix.length);
+        const key = token(segments.length);
+        segments.push(math);
+        return `${prefix}${key}`;
+      });
+      return;
+    }
+
+    text = text.replace(pattern, match => {
+      const key = token(segments.length);
+      segments.push(match);
+      return key;
+    });
+  });
+
+  return { text, segments, token };
+}
+
+function renderMath(container, retries = 10) {
+  if (!container) return;
+  if (typeof renderMathInElement === 'function') {
+    renderMathInElement(container, {
+      throwOnError: false,
+      strict: 'ignore',
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true },
+      ],
+    });
+    return;
+  }
+  if (retries > 0) {
+    setTimeout(() => renderMath(container, retries - 1), 50);
+  }
+}
+
+function renderMarkdownAndMath(rawText, container) {
+  if (!container) return;
+  const protectedMath = protectMathSegments(rawText || '');
+  let html = marked.parse(protectedMath.text);
+
+  protectedMath.segments.forEach((segment, index) => {
+    html = html.split(protectedMath.token(index)).join(segment);
+  });
+
+  container.innerHTML = html;
+  renderMath(container);
+}
 
 // ---------- Auto-resize textarea ----------
 userInput.addEventListener('input', () => {
@@ -291,6 +400,7 @@ async function sendMessage(text) {
   // Create empty streaming bot bubble (typing indicator shown initially)
   const bubble = appendStreamingBubble();
   let firstToken = true;
+  let botRawText = '';
 
   try {
     const res = await fetch('/api/chat/stream', {
@@ -326,13 +436,14 @@ async function sendMessage(text) {
         if (raw === '[DONE]') break;
         try {
           const { token } = JSON.parse(raw);
-          if (firstToken) {
+          botRawText += token;
+          if (ENABLE_BOT_MARKDOWN_LATEX) {
             // Replace typing indicator with first real content
-            bubble.textContent = token;
-            firstToken = false;
+            renderMarkdownAndMath(botRawText, bubble);
           } else {
-            bubble.textContent += token;
+            bubble.textContent = botRawText;
           }
+          firstToken = false;
           chatArea.scrollTop = chatArea.scrollHeight;
         } catch (_) { /* ignore malformed chunks */ }
       }
@@ -357,7 +468,11 @@ function appendMessage(role, text) {
 
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
-  bubble.textContent = text;
+  if (role === 'bot' && ENABLE_BOT_MARKDOWN_LATEX) {
+    renderMarkdownAndMath(text, bubble);
+  } else {
+    bubble.textContent = text;
+  }
 
   if (role === 'user') {
     row.appendChild(bubble);

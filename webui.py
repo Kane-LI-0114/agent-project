@@ -23,10 +23,10 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from config.settings import DEMO_PROMPTS
+from config.settings import DEMO_PROMPTS, ENABLE_BOT_MARKDOWN_LATEX
 from core.conversation import ConversationManager
 from core.response_handler import ResponseHandler
 from llm import get_llm_client
@@ -115,13 +115,24 @@ async def demos():
     )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Avoid browser default favicon 404 noise in logs."""
+    return Response(status_code=204)
+
+
 # --------------------------------------------------------------------------- #
 # Serve the frontend
 # --------------------------------------------------------------------------- #
 @app.get("/", response_class=HTMLResponse)
 async def index():
     html_path = Path(__file__).parent / "templates" / "index.html"
-    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    html = html_path.read_text(encoding="utf-8")
+    html = html.replace(
+        "__ENABLE_BOT_MARKDOWN_LATEX__",
+        "true" if ENABLE_BOT_MARKDOWN_LATEX else "false",
+    )
+    return HTMLResponse(html)
 
 
 # --------------------------------------------------------------------------- #
