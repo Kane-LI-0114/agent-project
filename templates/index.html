@@ -31,6 +31,12 @@
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
+    overflow: hidden;
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   /* ---------- Layout ---------- */
@@ -38,8 +44,13 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
     max-width: var(--max-w);
     margin: 0 auto;
+    background: var(--surface);
+    overflow: hidden;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
   }
 
   /* --- Header --- */
@@ -50,6 +61,10 @@
     padding: 14px 20px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: saturate(140%) blur(6px);
   }
   .header h1 {
     font-size: 17px;
@@ -75,6 +90,8 @@
   .chat-area {
     flex: 1;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     padding: 24px 20px;
     display: flex;
     flex-direction: column;
@@ -208,6 +225,10 @@
     display: flex;
     gap: 10px;
     align-items: flex-end;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
   .input-bar textarea {
     flex: 1;
@@ -244,6 +265,51 @@
   /* Scrollbar */
   .chat-area::-webkit-scrollbar { width: 6px; }
   .chat-area::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+
+  @media (max-width: 880px) {
+    .app {
+      max-width: 100%;
+      border-left: none;
+      border-right: none;
+    }
+
+    .header,
+    .chat-area,
+    .input-bar {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+
+    .msg-bubble {
+      max-width: 86%;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .header h1 {
+      font-size: 16px;
+    }
+
+    .welcome h2 {
+      font-size: 20px;
+    }
+
+    .msg-bubble {
+      max-width: 92%;
+      font-size: 14px;
+    }
+
+    .input-bar {
+      gap: 8px;
+      padding-top: 12px;
+    }
+
+    .send-btn {
+      width: 42px;
+      height: 42px;
+      font-size: 17px;
+    }
+  }
 </style>
 </head>
 <body>
