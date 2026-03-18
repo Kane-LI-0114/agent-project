@@ -33,6 +33,10 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 │   ├── azure_client.py       # Azure OpenAI API implementation
 │   └── oneapi_client.py      # One API (OpenAI-compatible) implementation
 ├── demo.py                   # Main CLI demo entry point (modular version)
+├── webui.py                  # FastAPI web UI and chat API
+├── start.sh                  # Convenience launcher for the web UI
+├── templates/
+│   └── index.html            # Frontend chat interface
 ├── single_file_demo.py       # Single-file combined version for quick demo
 └── agent-home-work-azure.py  # Original reference implementation
 ```
@@ -64,7 +68,6 @@ Edit `.env` and fill in your credentials:
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 AZURE_OPENAI_API_VERSION=2024-08-01-preview
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
 LLM_BACKEND=azure
 ```
 
@@ -72,9 +75,14 @@ LLM_BACKEND=azure
 ```dotenv
 ONEAPI_API_KEY=your-key
 ONEAPI_BASE_URL=https://your-endpoint/v1
-ONEAPI_MODEL_NAME=gpt-4o
 LLM_BACKEND=oneapi
 ```
+
+Current code defaults in [config/settings.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/config/settings.py):
+- Azure deployment name: `gpt-4o`
+- One API model name: `DeepSeek-V3.2`
+
+If you want to change either default, update [config/settings.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/config/settings.py) directly.
 
 ### 3. Run the demo
 
@@ -83,10 +91,22 @@ LLM_BACKEND=oneapi
 python demo.py
 ```
 
+**Web UI**:
+```bash
+python webui.py
+```
+
 **Single-file version** (for quick demos):
 ```bash
 python single_file_demo.py
 ```
+
+You can also start the web UI with:
+```bash
+./start.sh
+```
+
+If the LLM backend is not configured yet, the web page can still load, but chat requests will return a clear configuration error until `.env` is completed.
 
 ## Demo Shortcuts
 

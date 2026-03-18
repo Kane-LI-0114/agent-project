@@ -135,18 +135,30 @@ class ConversationManager:
         - The number of turns exceeds ``_max_turns``, OR
         - The total token count exceeds ``_max_tokens``.
 
-        Truncation removes the oldest *pair* of messages (user + assistant)
-        to keep the dialog coherent.
+        Truncation removes the oldest completed exchange (user + assistant
+        pair) to keep the dialog coherent.
         """
         # Hard turn limit
         while len(self._history) > self._max_turns:
-            removed = self._history.pop(0)
-            logger.debug("Truncated oldest message (turn limit): %s", removed["role"])
+            self._pop_oldest_exchange("turn limit")
 
         # Token budget
         while (
             len(self._history) > 2
             and count_messages_tokens(self.get_messages()) > self._max_tokens
         ):
-            removed = self._history.pop(0)
-            logger.debug("Truncated oldest message (token limit): %s", removed["role"])
+            self._pop_oldest_exchange("token limit")
+
+    def _pop_oldest_exchange(self, reason: str) -> None:
+        """Remove the oldest coherent exchange from history."""
+        if not self._history:
+            return
+
+        removed_count = min(2, len(self._history))
+        removed = self._history[:removed_count]
+        del self._history[:removed_count]
+        logger.debug(
+            "Truncated oldest exchange (%s): roles=%s",
+            reason,
+            [msg["role"] for msg in removed],
+        )

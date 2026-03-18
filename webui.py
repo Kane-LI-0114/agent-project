@@ -16,10 +16,8 @@ Usage
 Then open http://localhost:8000 in your browser.
 """
 
-import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -45,10 +43,33 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 app = FastAPI(title="CSIT5900 SmartTutor")
 
-# Initialise LLM client, conversation manager, and response handler once
-llm_client = get_llm_client()
 conversation = ConversationManager()
-handler = ResponseHandler(llm_client, conversation)
+handler: ResponseHandler | None = None
+handler_init_error: str | None = None
+
+
+def get_handler() -> ResponseHandler:
+    """
+    Lazily initialise the response handler.
+
+    This avoids import-time crashes when the LLM backend is not yet configured.
+    """
+    global handler, handler_init_error
+
+    if handler is not None:
+        return handler
+
+    if handler_init_error is not None:
+        raise RuntimeError(handler_init_error)
+
+    try:
+        llm_client = get_llm_client()
+        handler = ResponseHandler(llm_client, conversation)
+        return handler
+    except (RuntimeError, ValueError) as exc:
+        handler_init_error = str(exc)
+        logger.error("Failed to initialise handler: %s", exc)
+        raise RuntimeError(handler_init_error) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -68,7 +89,13 @@ class ChatResponse(BaseModel):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """Process a user message and return the complete reply (non-streaming)."""
-    reply = await handler.handle(req.message)
+    try:
+        reply = await get_handler().handle(req.message)
+    except RuntimeError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"reply": f"[ERROR] {exc}"},
+        )
     return ChatResponse(reply=reply)
 
 
@@ -83,7 +110,15 @@ async def chat_stream(req: ChatRequest):
         data: [DONE]\n\n
     """
     async def event_generator():
-        async for chunk in handler.handle_stream(req.message):
+        try:
+            response_handler = get_handler()
+        except RuntimeError as exc:
+            payload = json.dumps({"token": f"[ERROR] {exc}"}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        async for chunk in response_handler.handle_stream(req.message):
             # JSON-encode the chunk so special characters (newlines, quotes)
             # don't break the SSE framing.
             payload = json.dumps({"token": chunk}, ensure_ascii=False)
