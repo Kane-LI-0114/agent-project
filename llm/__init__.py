@@ -1,15 +1,15 @@
 """
 llm/__init__.py
 ===============
-Factory function that returns the appropriate LLM client based on the
+Factory functions that return the appropriate LLM client based on the
 configured backend (``LLM_BACKEND`` environment variable).
 """
 
-from config.settings import LLM_BACKEND
+from config.settings import LLM_BACKEND, StrictRole, get_azure_config, get_oneapi_config
 from llm.base_client import BaseLLMClient
 
 
-def get_llm_client() -> BaseLLMClient:
+def get_llm_client(role: StrictRole = "default") -> BaseLLMClient:
     """
     Instantiate and return the LLM client selected by the ``LLM_BACKEND``
     environment variable.
@@ -25,10 +25,10 @@ def get_llm_client() -> BaseLLMClient:
     """
     if LLM_BACKEND == "azure":
         from llm.azure_client import AzureLLMClient
-        return AzureLLMClient()
+        return AzureLLMClient(get_azure_config(role))
     elif LLM_BACKEND == "oneapi":
         from llm.oneapi_client import OneAPILLMClient
-        return OneAPILLMClient()
+        return OneAPILLMClient(get_oneapi_config(role))
     else:
         raise ValueError(
             f"Unknown LLM_BACKEND '{LLM_BACKEND}'. "

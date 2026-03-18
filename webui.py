@@ -23,10 +23,15 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from typing import Literal
+from pydantic import BaseModel
 
-from config.settings import DEMO_PROMPTS, ENABLE_BOT_MARKDOWN_LATEX, SEARCH_ENABLED
+from config.settings import (
+    DEMO_PROMPTS,
+    ENABLE_BOT_MARKDOWN_LATEX,
+    SEARCH_ENABLED,
+    STRICT_MODE_ENABLED,
+)
 from core.conversation import ConversationManager
 from core.response_handler import ResponseHandler
 from llm import get_llm_client
@@ -67,7 +72,13 @@ def get_handler() -> ResponseHandler:
 
     try:
         llm_client = get_llm_client()
-        handler = ResponseHandler(llm_client, conversation)
+        handler = ResponseHandler(
+            llm_client,
+            conversation,
+            strict_reviewer=get_llm_client("strict_reviewer"),
+            strict_generator=get_llm_client("strict_generator"),
+            strict_auditor=get_llm_client("strict_auditor"),
+        )
         return handler
     except (RuntimeError, ValueError) as exc:
         handler_init_error = str(exc)
@@ -81,11 +92,14 @@ def get_handler() -> ResponseHandler:
 class ChatRequest(BaseModel):
     message: str
     search_mode: Literal["auto", "on", "off"] = "auto"
+    mode: Literal["normal", "strict"] = "normal"
 
 
 class ChatResponse(BaseModel):
     reply: str
     sources: list[dict[str, str]]
+    mode: Literal["normal", "strict"] = "normal"
+    strict_trace: list[dict[str, object]] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -95,13 +109,23 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest):
     """Process a user message and return the complete reply (non-streaming)."""
     try:
-        payload = await get_handler().handle(req.message, req.search_mode)
+        payload = await get_handler().handle(req.message, req.search_mode, req.mode)
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
-            content={"reply": f"[ERROR] {exc}", "sources": []},
+            content={
+                "reply": f"[ERROR] {exc}",
+                "sources": [],
+                "mode": req.mode,
+                "strict_trace": None,
+            },
         )
-    return ChatResponse(reply=payload.reply, sources=payload.sources)
+    return ChatResponse(
+        reply=payload.reply,
+        sources=payload.sources,
+        mode=payload.mode,
+        strict_trace=payload.strict_trace,
+    )
 
 
 @app.post("/api/chat/stream")
@@ -125,6 +149,12 @@ async def chat_stream(req: ChatRequest):
             yield f"data: {payload}\n\n"
             done_payload = json.dumps({"type": "done"}, ensure_ascii=False)
             yield f"data: {done_payload}\n\n"
+            return
+
+        if req.mode == "strict":
+            async for event in response_handler.handle_strict_stream(req.message, req.search_mode):
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
             return
 
         async for event in response_handler.handle_stream(req.message, req.search_mode):
@@ -178,6 +208,10 @@ async def index():
     html = html.replace(
         "__SEARCH_ENABLED__",
         "true" if SEARCH_ENABLED else "false",
+    )
+    html = html.replace(
+        "__STRICT_MODE_ENABLED__",
+        "true" if STRICT_MODE_ENABLED else "false",
     )
     return HTMLResponse(html)
 

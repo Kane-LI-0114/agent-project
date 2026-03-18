@@ -27,7 +27,7 @@
         <div class="welcome" id="welcomeScreen">
           <div class="welcome-badge">SmartTutor for CSIT5900</div>
           <h2>What can I help with for your coursework today?</h2>
-          <p>Ask a homework question, request a concept explanation, or try one of the sample prompts below. The reply will stream smoothly and settle into full Markdown once generation finishes.</p>
+          <p>Use normal mode for fast streaming replies, or strict mode for a three-step review flow with visible safety cards before the final answer.</p>
           <div class="demo-grid" id="demoGrid"></div>
         </div>
         <div class="messages" id="messageList"></div>
@@ -37,12 +37,32 @@
     <div class="composer-wrap">
       <div class="composer">
         <div class="composer-toolbar">
-          <div class="search-toggle" id="searchToggle" role="group" aria-label="Search mode">
-            <button class="search-mode-btn active" type="button" data-mode="auto">Auto Search</button>
-            <button class="search-mode-btn" type="button" data-mode="on">Search On</button>
-            <button class="search-mode-btn" type="button" data-mode="off">Search Off</button>
+          <div class="toolbar-row">
+            <div class="toolbar-dropdown" id="modeDropdown">
+              <button class="toolbar-trigger" id="modeTrigger" type="button" aria-expanded="false" aria-controls="modeMenu">
+                <span class="toolbar-trigger-label">Mode</span>
+                <span class="toolbar-trigger-value" id="modeTriggerValue">Normal Mode</span>
+                <span class="toolbar-trigger-caret">+</span>
+              </button>
+              <div class="toolbar-menu" id="modeMenu" role="group" aria-label="Chat mode">
+                <button class="toolbar-option active" type="button" data-mode="normal">Normal Mode</button>
+                <button class="toolbar-option" type="button" data-mode="strict">Strict Mode</button>
+              </div>
+            </div>
+            <div class="toolbar-dropdown" id="searchDropdown">
+              <button class="toolbar-trigger" id="searchTrigger" type="button" aria-expanded="false" aria-controls="searchMenu">
+                <span class="toolbar-trigger-label">Search</span>
+                <span class="toolbar-trigger-value" id="searchTriggerValue">Auto Search</span>
+                <span class="toolbar-trigger-caret">+</span>
+              </button>
+              <div class="toolbar-menu" id="searchMenu" role="group" aria-label="Search mode">
+                <button class="toolbar-option active" type="button" data-mode="auto">Auto Search</button>
+                <button class="toolbar-option" type="button" data-mode="on">Search On</button>
+                <button class="toolbar-option" type="button" data-mode="off">Search Off</button>
+              </div>
+            </div>
           </div>
-          <div class="search-status" id="searchStatus">Auto mode uses search only when the question likely needs live facts or web sources.</div>
+          <div class="search-status" id="searchStatus">Normal streams. Strict reviews first.</div>
         </div>
         <div class="input-bar">
           <textarea id="userInput" rows="1" placeholder="Message SmartTutor..." onkeydown="handleKey(event)"></textarea>
@@ -68,12 +88,14 @@ let activeStreamController = null;
 let activeRequestController = null;
 const ENABLE_BOT_MARKDOWN_LATEX = __ENABLE_BOT_MARKDOWN_LATEX__;
 const SEARCH_ENABLED = __SEARCH_ENABLED__;
+const STRICT_MODE_ENABLED = __STRICT_MODE_ENABLED__;
 const STREAM_FLUSH_INTERVAL = 24;
 const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
 const BOTTOM_STICKY_THRESHOLD = 120;
 const PANEL_TRANSITION_MS = 320;
 let searchMode = SEARCH_ENABLED ? 'auto' : 'off';
+let chatMode = STRICT_MODE_ENABLED ? 'normal' : 'normal';
 
 const chatArea = document.getElementById('chatArea');
 const welcomeScreen = document.getElementById('welcomeScreen');
@@ -81,8 +103,13 @@ const messageList = document.getElementById('messageList');
 const demoGrid = document.getElementById('demoGrid');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
-const searchToggle = document.getElementById('searchToggle');
 const searchStatus = document.getElementById('searchStatus');
+const modeDropdown = document.getElementById('modeDropdown');
+const modeTrigger = document.getElementById('modeTrigger');
+const modeTriggerValue = document.getElementById('modeTriggerValue');
+const searchDropdown = document.getElementById('searchDropdown');
+const searchTrigger = document.getElementById('searchTrigger');
+const searchTriggerValue = document.getElementById('searchTriggerValue');
 
 marked.setOptions({
   gfm: true,
@@ -167,18 +194,60 @@ function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
-function setSearchMode(mode) {
-  searchMode = mode;
-  const modeLabels = {
-    auto: 'Auto mode uses search only when the question likely needs live facts or web sources.',
-    on: 'Search On adds web, academic, and configured knowledge-page sources before every answer.',
-    off: 'Search Off keeps replies fully local to the model and conversation history.',
+function setChatMode(mode) {
+  chatMode = mode === 'strict' && STRICT_MODE_ENABLED ? 'strict' : 'normal';
+  const descriptions = {
+    normal: 'Normal streams.',
+    strict: 'Strict reviews first.',
+  };
+  const labels = {
+    normal: 'Normal Mode',
+    strict: 'Strict Mode',
   };
 
-  searchToggle.querySelectorAll('.search-mode-btn').forEach(button => {
+  modeDropdown.querySelectorAll('.toolbar-option').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === chatMode);
+  });
+  modeTriggerValue.textContent = labels[chatMode] || 'Normal Mode';
+  searchStatus.textContent = descriptions[chatMode] || '';
+}
+
+function setSearchMode(mode) {
+  searchMode = mode;
+  const searchDescriptions = {
+    auto: 'Auto search when needed.',
+    on: 'Search every time.',
+    off: 'No web search.',
+  };
+  const modeDescriptions = {
+    normal: 'Normal streams.',
+    strict: 'Strict reviews first.',
+  };
+  const labels = {
+    auto: 'Auto Search',
+    on: 'Search On',
+    off: 'Search Off',
+  };
+
+  searchDropdown.querySelectorAll('.toolbar-option').forEach(button => {
     button.classList.toggle('active', button.dataset.mode === mode);
   });
-  searchStatus.textContent = modeLabels[mode] || '';
+  searchTriggerValue.textContent = labels[mode] || 'Auto Search';
+  searchStatus.textContent = `${modeDescriptions[chatMode]} ${searchDescriptions[mode] || ''}`.trim();
+}
+
+function setDropdownOpen(dropdown, open) {
+  if (!dropdown) return;
+  dropdown.classList.toggle('is-open', open);
+  const trigger = dropdown.querySelector('.toolbar-trigger');
+  if (trigger) {
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+}
+
+function closeAllDropdowns() {
+  setDropdownOpen(modeDropdown, false);
+  setDropdownOpen(searchDropdown, false);
 }
 
 function isNearBottom() {
@@ -286,6 +355,216 @@ function createStreamingMessage() {
     searchSources: [],
     pendingHideTimer: null,
   };
+}
+
+function createStrictMessage() {
+  const row = document.createElement('div');
+  row.className = 'msg-row bot';
+
+  const card = document.createElement('div');
+  card.className = 'msg-card';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble strict-bubble';
+
+  const strictWrap = document.createElement('div');
+  strictWrap.className = 'strict-wrap';
+
+  const strictHeader = document.createElement('div');
+  strictHeader.className = 'strict-header';
+  strictHeader.innerHTML = `
+    <span class="strict-badge">Strict Mode</span>
+    <span class="strict-caption">Three-stage review pipeline</span>
+  `;
+
+  const cards = document.createElement('div');
+  cards.className = 'strict-cards';
+
+  const finalAnswer = document.createElement('div');
+  finalAnswer.className = 'strict-final-answer is-hidden';
+
+  const finalLabel = document.createElement('div');
+  finalLabel.className = 'strict-final-label';
+  finalLabel.textContent = 'Final Answer';
+
+  const finalContent = document.createElement('div');
+  finalContent.className = 'strict-final-content';
+
+  const sourcesPanel = document.createElement('div');
+  sourcesPanel.className = 'message-sources';
+  sourcesPanel.setAttribute('aria-hidden', 'true');
+
+  finalAnswer.appendChild(finalLabel);
+  finalAnswer.appendChild(finalContent);
+  finalAnswer.appendChild(sourcesPanel);
+  strictWrap.appendChild(strictHeader);
+  strictWrap.appendChild(cards);
+  strictWrap.appendChild(finalAnswer);
+  bubble.appendChild(strictWrap);
+  card.appendChild(bubble);
+  row.appendChild(card);
+  messageList.appendChild(row);
+
+  const trace = [
+    { key: 'input_review', title: 'Input Review', status: 'pending', summary: 'Waiting to inspect the user request.', decision: 'pending' },
+    { key: 'answer_generation', title: 'Answer Generation', status: 'pending', summary: 'Waiting to generate a course-safe draft.', decision: 'pending' },
+    { key: 'final_audit', title: 'Final Audit', status: 'pending', summary: 'Waiting to approve the draft answer.', decision: 'pending' },
+  ];
+  renderStrictTrace(cards, trace);
+
+  const finalAnimator = createAnimatedTextState(partialText => {
+    renderFinalAnswer(finalContent, partialText);
+  });
+
+  scrollToBottom(true);
+  return { row, cards, finalAnswer, finalContent, sourcesPanel, trace, finalAnimator, pendingSources: [] };
+}
+
+function renderStrictTrace(container, trace) {
+  container.innerHTML = (trace || []).map(stage => `
+    <article class="strict-stage status-${escapeHtml(stage.status || 'pending')}">
+      <div class="strict-stage-top">
+        <h3>${escapeHtml(stage.title || 'Stage')}</h3>
+        <span class="strict-stage-pill">${escapeHtml(stage.status || 'pending')}</span>
+      </div>
+      <p>${escapeHtml(stage.summary || '')}</p>
+      <div class="strict-stage-meta">
+        <span>Decision: ${escapeHtml(stage.decision || 'pending')}</span>
+        <span>${escapeHtml(formatStrictStageTiming(stage))}</span>
+      </div>
+    </article>
+  `).join('');
+}
+
+function formatStrictStageTiming(stage) {
+  if (stage.duration_ms) return `${Number(stage.duration_ms)} ms`;
+  if (stage.status === 'pending') return 'Waiting...';
+  if (stage.status === 'skipped') return 'Skipped';
+  return 'Running...';
+}
+
+function updateStrictTrace(strictState, trace) {
+  if (!strictState) return;
+  strictState.trace = Array.isArray(trace) ? trace : strictState.trace;
+  renderStrictTrace(strictState.cards, strictState.trace);
+  scrollToBottom();
+}
+
+function createAnimatedTextState(render) {
+  return {
+    rawText: '',
+    displayLength: 0,
+    completed: false,
+    renderScheduled: false,
+    lastRenderAt: 0,
+    render,
+    onComplete: null,
+  };
+}
+
+function renderAnimatedTextFrame(state) {
+  state.renderScheduled = false;
+
+  const remaining = state.rawText.length - state.displayLength;
+  if (remaining > 0) {
+    const chunkSize = Math.max(
+      STREAM_MIN_BATCH,
+      Math.min(STREAM_MAX_BATCH, Math.ceil(remaining / 10))
+    );
+    state.displayLength += Math.min(chunkSize, remaining);
+    state.render(state.rawText.slice(0, state.displayLength));
+    state.lastRenderAt = performance.now();
+    scrollToBottom();
+  }
+
+  const hasPendingText = state.displayLength < state.rawText.length;
+  if (hasPendingText || !state.completed) {
+    scheduleAnimatedTextFrame(state);
+    return;
+  }
+
+  state.render(state.rawText);
+  if (typeof state.onComplete === 'function') {
+    const callback = state.onComplete;
+    state.onComplete = null;
+    callback();
+  }
+}
+
+function scheduleAnimatedTextFrame(state) {
+  if (!state || state.renderScheduled) return;
+
+  state.renderScheduled = true;
+  requestAnimationFrame(() => {
+    const elapsed = performance.now() - state.lastRenderAt;
+    if (elapsed >= STREAM_FLUSH_INTERVAL) {
+      renderAnimatedTextFrame(state);
+    } else {
+      state.renderScheduled = false;
+      setTimeout(() => scheduleAnimatedTextFrame(state), STREAM_FLUSH_INTERVAL - elapsed);
+    }
+  });
+}
+
+function animateTextIntoState(state, text, onComplete = null) {
+  if (!state) return;
+  state.rawText = text || '';
+  state.displayLength = 0;
+  state.completed = true;
+  state.onComplete = onComplete;
+  state.lastRenderAt = 0;
+  state.render('');
+  scheduleAnimatedTextFrame(state);
+}
+
+function renderFinalAnswer(container, text) {
+  if (!container) return;
+  if (ENABLE_BOT_MARKDOWN_LATEX) {
+    renderMarkdownAndMath(text, container);
+  } else {
+    container.textContent = text;
+  }
+}
+
+function renderSourcesPanel(panel, sources) {
+  if (!panel) return;
+  if (!Array.isArray(sources) || sources.length === 0) {
+    panel.classList.remove('is-visible');
+    panel.setAttribute('aria-hidden', 'true');
+    panel.innerHTML = '';
+    return;
+  }
+
+  const details = sources.map(source => `
+    <li class="message-source-item">
+      <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
+        ${escapeHtml(source.title || source.url || 'Source')}
+      </a>
+      <div class="message-source-meta">${escapeHtml(source.provider || 'Source')}</div>
+      <p class="message-source-snippet">${escapeHtml(source.snippet || '')}</p>
+    </li>
+  `).join('');
+
+  panel.innerHTML = `
+    <div class="message-sources-divider" aria-hidden="true"></div>
+    <div class="message-sources-header">
+      <span class="message-sources-count">${sources.length} Sources were used</span>
+    </div>
+    <ul class="message-sources-list">${details}</ul>
+  `;
+  panel.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => {
+    panel.classList.add('is-visible');
+  });
+}
+
+function animateStrictFinalAnswer(strictState, text, sources) {
+  if (!strictState) return;
+  strictState.finalAnswer.classList.remove('is-hidden');
+  animateTextIntoState(strictState.finalAnimator, text || '', () => {
+    renderSourcesPanel(strictState.sourcesPanel, sources || strictState.pendingSources || []);
+    scrollToBottom(true);
+  });
 }
 
 function finalizeStreamingMessage(streamState) {
@@ -425,7 +704,7 @@ function hidePendingPanel(streamState, immediate = false) {
   }, PANEL_TRANSITION_MS);
 }
 
-function startSearchPending(streamState, sources) {
+function startSearchPending(streamState) {
   if (!streamState) return;
   streamState.searchPending = true;
   streamState.bubble.classList.add('searching');
@@ -443,35 +722,7 @@ function finishSearchPending(streamState, sources) {
 
 function renderSources(streamState) {
   if (!streamState || !streamState.sourcesPanel) return;
-  const sources = Array.isArray(streamState.searchSources) ? streamState.searchSources : [];
-  if (sources.length === 0) {
-    streamState.sourcesPanel.classList.remove('is-visible');
-    streamState.sourcesPanel.setAttribute('aria-hidden', 'true');
-    streamState.sourcesPanel.innerHTML = '';
-    return;
-  }
-
-  const details = sources.map(source => `
-    <li class="message-source-item">
-      <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
-        ${escapeHtml(source.title || source.url || 'Source')}
-      </a>
-      <div class="message-source-meta">${escapeHtml(source.provider || 'Source')}</div>
-      <p class="message-source-snippet">${escapeHtml(source.snippet || '')}</p>
-    </li>
-  `).join('');
-
-  streamState.sourcesPanel.innerHTML = `
-    <div class="message-sources-divider" aria-hidden="true"></div>
-    <div class="message-sources-header">
-      <span class="message-sources-count">${sources.length} Sources were used</span>
-    </div>
-    <ul class="message-sources-list">${details}</ul>
-  `;
-  streamState.sourcesPanel.setAttribute('aria-hidden', 'false');
-  requestAnimationFrame(() => {
-    streamState.sourcesPanel.classList.add('is-visible');
-  });
+  renderSourcesPanel(streamState.sourcesPanel, streamState.searchSources);
 }
 
 fetch('/api/demos')
@@ -503,6 +754,20 @@ async function sendMessage(text) {
   syncTextareaHeight();
   setLoading(true);
 
+  try {
+    if (chatMode === 'strict') {
+      await sendStrictMessage(msg);
+    } else {
+      await sendStreamingMessage(msg);
+    }
+  } finally {
+    setLoading(false);
+    activeStreamController = null;
+    activeRequestController = null;
+  }
+}
+
+async function sendStreamingMessage(msg) {
   const streamState = createStreamingMessage();
   activeStreamController = streamState;
 
@@ -512,7 +777,7 @@ async function sendMessage(text) {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, search_mode: searchMode }),
+      body: JSON.stringify({ message: msg, search_mode: searchMode, mode: 'normal' }),
       signal: activeRequestController.signal,
     });
 
@@ -547,7 +812,7 @@ async function sendMessage(text) {
             if (payload.type === 'token' && payload.token) {
               pushStreamText(streamState, payload.token);
             } else if (payload.type === 'search_start') {
-              startSearchPending(streamState, payload.sources || []);
+              startSearchPending(streamState);
             } else if (payload.type === 'search_end') {
               finishSearchPending(streamState, payload.sources || []);
             } else if (payload.type === 'done') {
@@ -555,7 +820,6 @@ async function sendMessage(text) {
               break;
             }
           } catch (_) {
-            // Ignore malformed SSE data chunks.
           }
         }
 
@@ -572,10 +836,82 @@ async function sendMessage(text) {
     } else {
       failStream(streamState, '[Error] Request failed.');
     }
-  } finally {
-    setLoading(false);
-    activeStreamController = null;
-    activeRequestController = null;
+  }
+}
+
+async function sendStrictMessage(msg) {
+  const strictState = createStrictMessage();
+  activeStreamController = strictState;
+
+  try {
+    activeRequestController = new AbortController();
+    const res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, search_mode: searchMode, mode: 'strict' }),
+      signal: activeRequestController.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      throw new Error('Bad response');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let doneReceived = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const event of events) {
+        const lines = event.split('\n');
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+
+          const raw = trimmed.slice(5).trim();
+          try {
+            const payload = JSON.parse(raw);
+            if (payload.type === 'strict_trace') {
+              updateStrictTrace(strictState, payload.trace || []);
+            } else if (payload.type === 'strict_final') {
+              animateStrictFinalAnswer(strictState, payload.reply || '[Error] Empty response.', payload.sources || []);
+            } else if (payload.type === 'search_start') {
+              // Strict mode shows progress in the stage cards, so no extra pending shell is used.
+            } else if (payload.type === 'search_end') {
+              strictState.pendingSources = payload.sources || [];
+            } else if (payload.type === 'done') {
+              doneReceived = true;
+              break;
+            }
+          } catch (_) {
+          }
+        }
+
+        if (doneReceived) break;
+      }
+
+      if (doneReceived) break;
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      strictState.row.remove();
+      return;
+    }
+
+    renderStrictTrace(strictState.cards, [
+      { title: 'Input Review', status: 'failed', summary: 'The strict pipeline request failed before completion.', decision: 'failed', duration_ms: 0 },
+      { title: 'Answer Generation', status: 'skipped', summary: 'Skipped because the request failed.', decision: 'skipped', duration_ms: 0 },
+      { title: 'Final Audit', status: 'skipped', summary: 'Skipped because the request failed.', decision: 'skipped', duration_ms: 0 },
+    ]);
+    animateStrictFinalAnswer(strictState, '[Error] Request failed.', []);
   }
 }
 
@@ -597,30 +933,65 @@ async function clearChat() {
   }
   await fetch('/api/clear', { method: 'POST' });
   messageList.innerHTML = '';
-  if (activeStreamController) {
-    activeStreamController.completed = true;
-    activeStreamController = null;
-  }
+  activeStreamController = null;
   showWelcomeScreen();
   userInput.value = '';
   syncTextareaHeight();
   userInput.focus();
 }
 
+if (STRICT_MODE_ENABLED) {
+  modeTrigger.addEventListener('click', event => {
+    event.stopPropagation();
+    const next = !modeDropdown.classList.contains('is-open');
+    closeAllDropdowns();
+    setDropdownOpen(modeDropdown, next);
+  });
+  modeDropdown.querySelector('.toolbar-menu').addEventListener('click', event => {
+    const button = event.target.closest('.toolbar-option');
+    if (!button) return;
+    setChatMode(button.dataset.mode);
+    setSearchMode(searchMode);
+    setDropdownOpen(modeDropdown, false);
+  });
+  setChatMode(chatMode);
+} else {
+  modeDropdown.classList.add('is-disabled');
+  modeDropdown.querySelectorAll('.toolbar-option, .toolbar-trigger').forEach(button => {
+    button.disabled = true;
+  });
+  setChatMode('normal');
+}
+
 if (SEARCH_ENABLED) {
-  searchToggle.addEventListener('click', event => {
-    const button = event.target.closest('.search-mode-btn');
+  searchTrigger.addEventListener('click', event => {
+    event.stopPropagation();
+    const next = !searchDropdown.classList.contains('is-open');
+    closeAllDropdowns();
+    setDropdownOpen(searchDropdown, next);
+  });
+  searchDropdown.querySelector('.toolbar-menu').addEventListener('click', event => {
+    const button = event.target.closest('.toolbar-option');
     if (!button) return;
     setSearchMode(button.dataset.mode);
+    setDropdownOpen(searchDropdown, false);
   });
   setSearchMode(searchMode);
 } else {
-  searchToggle.classList.add('is-disabled');
-  searchToggle.querySelectorAll('.search-mode-btn').forEach(button => {
+  searchDropdown.classList.add('is-disabled');
+  searchDropdown.querySelectorAll('.toolbar-option, .toolbar-trigger').forEach(button => {
     button.disabled = true;
   });
-  searchStatus.textContent = 'Search is disabled by server configuration.';
+  searchStatus.textContent = chatMode === 'strict'
+    ? 'Strict reviews first. Search disabled.'
+    : 'Normal streams. Search disabled.';
 }
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.toolbar-dropdown')) {
+    closeAllDropdowns();
+  }
+});
 
 syncTextareaHeight();
 </script>

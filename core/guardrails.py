@@ -1,32 +1,71 @@
 """
 core/guardrails.py
 ==================
-Input classification and guardrails logic for the CSIT5900 Homework Tutoring
-Agent. Implements a **dual guardrails** mechanism:
+Shared guardrail helpers for the SmartTutor app.
 
-1. **Code-level pre-check** – fast heuristic/regex-based classifier that
-   catches obvious non-homework inputs without consuming an LLM call.
-2. **LLM system-prompt enforcement** – the system prompt itself instructs
-   the model to reject disallowed inputs and provide appropriate rejection
-   messages.
+This module now provides a layered input pre-filter used by both normal mode
+and strict mode:
 
-The code-level pre-check returns:
-- ``(True, None)`` if the input appears to be a valid homework or academic
-  request and should be forwarded to the LLM.
-- ``(False, reason)`` if the input is clearly off-topic and should be
-  rejected immediately with the given *reason* string.
+1. Empty-input validation
+2. Lightweight encoding detection/normalization
+3. Heuristic rule checks for obvious unsafe or off-topic requests
+4. Compatibility wrappers for the legacy normal-mode flow
 """
 
 from __future__ import annotations
 
+import base64
+import codecs
+import json
+import logging
 import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-# --------------------------------------------------------------------------- #
-# Keyword / pattern lists
-# --------------------------------------------------------------------------- #
+from config.settings import STRICT_REFUSAL_MESSAGE
 
-# Patterns that strongly suggest a non-homework, daily-life request.
+logger = logging.getLogger(__name__)
+
+_MORSE_TABLE = {
+    ".-": "A",
+    "-...": "B",
+    "-.-.": "C",
+    "-..": "D",
+    ".": "E",
+    "..-.": "F",
+    "--.": "G",
+    "....": "H",
+    "..": "I",
+    ".---": "J",
+    "-.-": "K",
+    ".-..": "L",
+    "--": "M",
+    "-.": "N",
+    "---": "O",
+    ".--.": "P",
+    "--.-": "Q",
+    ".-.": "R",
+    "...": "S",
+    "-": "T",
+    "..-": "U",
+    "...-": "V",
+    ".--": "W",
+    "-..-": "X",
+    "-.--": "Y",
+    "--..": "Z",
+    "-----": "0",
+    ".----": "1",
+    "..---": "2",
+    "...--": "3",
+    "....-": "4",
+    ".....": "5",
+    "-....": "6",
+    "--...": "7",
+    "---..": "8",
+    "----.": "9",
+}
+
 _LIFE_PATTERNS: List[str] = [
     r"\btravel\b",
     r"\bflight\b",
@@ -43,10 +82,8 @@ _LIFE_PATTERNS: List[str] = [
     r"\bdating\b",
     r"\bjoke\b",
     r"\btell me a joke\b",
-    r"\bfunny\b",
 ]
 
-# Patterns that indicate a valid academic/homework context.
 _HOMEWORK_PATTERNS: List[str] = [
     r"\bhomework\b",
     r"\bassignment\b",
@@ -91,7 +128,6 @@ _HOMEWORK_PATTERNS: List[str] = [
     r"\bstatistics\b",
 ]
 
-# Conversation-management phrases that should always pass the guardrail.
 _META_PATTERNS: List[str] = [
     r"\bsummar\w*\b.*\bconversation\b",
     r"\bconversation\b.*\bsummar\w*\b",
@@ -102,6 +138,37 @@ _META_PATTERNS: List[str] = [
     r"\bprovide\s+your\s+answers\s+accordingly\b",
 ]
 
+_JAILBREAK_PATTERNS: List[tuple[str, str]] = [
+    ("jailbreak", r"\bignore (all|previous|prior|above) instructions\b"),
+    ("jailbreak", r"\bdisregard (the )?(system|safety|guardrail)"),
+    ("jailbreak", r"\bprompt injection\b"),
+    ("jailbreak", r"\bdeveloper mode\b"),
+    ("jailbreak", r"\bact as\b.*\bwithout restrictions\b"),
+    ("jailbreak", r"\bbypass\b.*\bguardrail"),
+    ("jailbreak", r"\bdo anything now\b"),
+    ("jailbreak", r"\bshow (me )?(the )?(system|hidden) prompt\b"),
+    ("cheating", r"\bdo my homework\b"),
+    ("cheating", r"\bfinish my assignment\b"),
+    ("cheating", r"\bgive me the final answer only\b"),
+    ("cheating", r"\bpretend you are my teacher\b"),
+    ("harmful", r"\bhow to make\b.*\b(bomb|explosive|meth|drug)\b"),
+    ("harmful", r"\bkill\b|\bmurder\b"),
+    ("harmful", r"\bsexual\b|\bporn\b"),
+]
+
+
+@dataclass
+class InputGuardResult:
+    """Detailed result from the local input pre-filter."""
+
+    allowed: bool
+    normalized_input: str
+    rejection_reason: Optional[str] = None
+    reason_code: str = "allowed"
+    stage: str = "prefilter"
+    matched_rules: list[str] = field(default_factory=list)
+    encoding: Optional[str] = None
+
 
 def _matches_any(text: str, patterns: List[str]) -> bool:
     """Return True if *text* matches any of the given regex patterns."""
@@ -111,47 +178,150 @@ def _matches_any(text: str, patterns: List[str]) -> bool:
     return False
 
 
-# --------------------------------------------------------------------------- #
-# Public API
-# --------------------------------------------------------------------------- #
+def _is_printable_ratio_high(text: str) -> bool:
+    if not text:
+        return False
+    printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+    return printable / len(text) >= 0.9
+
+
+def _try_decode_base64(text: str) -> Optional[str]:
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) < 16 or len(compact) % 4 != 0:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9+/=]+", compact):
+        return None
+    try:
+        decoded = base64.b64decode(compact, validate=True).decode("utf-8")
+    except Exception:
+        return None
+    return decoded if _is_printable_ratio_high(decoded) else None
+
+
+def _try_decode_rot13(text: str) -> Optional[str]:
+    lower = text.lower().strip()
+    if lower.startswith("rot13:"):
+        decoded = codecs.decode(text.split(":", 1)[1].strip(), "rot_13")
+        return decoded if decoded.strip() else None
+    return None
+
+
+def _try_decode_morse(text: str) -> Optional[str]:
+    stripped = text.strip()
+    if not stripped or not re.fullmatch(r"[.\-/\s]+", stripped):
+        return None
+    words = []
+    for word in re.split(r"\s{3,}|/", stripped):
+        letters = []
+        for symbol in word.split():
+            decoded = _MORSE_TABLE.get(symbol)
+            if decoded is None:
+                return None
+            letters.append(decoded)
+        if letters:
+            words.append("".join(letters))
+    return " ".join(words).strip() if words else None
+
+
+def _normalize_input(text: str) -> tuple[str, Optional[str]]:
+    for encoding_name, decoder in (
+        ("base64", _try_decode_base64),
+        ("rot13", _try_decode_rot13),
+        ("morse", _try_decode_morse),
+    ):
+        decoded = decoder(text)
+        if decoded:
+            return decoded.strip(), encoding_name
+    return text.strip(), None
+
+
+def _find_rule_matches(text: str) -> list[str]:
+    matches: list[str] = []
+    for label, pattern in _JAILBREAK_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            matches.append(label)
+    return sorted(set(matches))
+
+
+def prefilter_input(user_input: str) -> InputGuardResult:
+    """Run local layered filtering before any LLM-based review."""
+    raw_text = user_input.strip()
+    if not raw_text:
+        return InputGuardResult(
+            allowed=False,
+            normalized_input="",
+            rejection_reason="Please enter a question.",
+            reason_code="empty_input",
+            stage="prefilter",
+        )
+
+    normalized_text, encoding = _normalize_input(raw_text)
+    matched_rules = _find_rule_matches(normalized_text)
+    if matched_rules:
+        primary = matched_rules[0]
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code=f"{encoding + '_' if encoding else ''}{primary}",
+            stage="prefilter",
+            matched_rules=matched_rules,
+            encoding=encoding,
+        )
+
+    if _matches_any(normalized_text, _META_PATTERNS):
+        return InputGuardResult(
+            allowed=True,
+            normalized_input=normalized_text,
+            encoding=encoding,
+        )
+
+    if _matches_any(normalized_text, _LIFE_PATTERNS) and not _matches_any(
+        normalized_text,
+        _HOMEWORK_PATTERNS,
+    ):
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="non_homework",
+            stage="prefilter",
+            encoding=encoding,
+        )
+
+    return InputGuardResult(
+        allowed=True,
+        normalized_input=normalized_text,
+        encoding=encoding,
+    )
+
 
 def check_input(user_input: str) -> Tuple[bool, Optional[str]]:
     """
-    Code-level guardrail pre-check.
+    Compatibility wrapper for the legacy normal-mode flow.
 
-    Parameters
-    ----------
-    user_input : str
-        The raw text entered by the user.
-
-    Returns
-    -------
-    (is_allowed, rejection_reason)
-        ``is_allowed`` is True when the input should be forwarded to the LLM.
-        When False, ``rejection_reason`` contains a user-facing explanation.
+    Returns:
+        (is_allowed, rejection_reason)
     """
-    text = user_input.strip()
-    if not text:
-        return False, "Please enter a question."
+    result = prefilter_input(user_input)
+    return result.allowed, result.rejection_reason
 
-    # 1. Always allow meta/conversation-management requests
-    if _matches_any(text, _META_PATTERNS):
-        return True, None
 
-    # 2. Reject obvious daily-life / non-academic inputs
-    if _matches_any(text, _LIFE_PATTERNS) and not _matches_any(text, _HOMEWORK_PATTERNS):
-        return (
-            False,
-            "Sorry I cannot help you on that as it is not a homework question "
-            "related to math or history.",
-        )
-
-    # 3. If the input matches known academic patterns, allow it
-    if _matches_any(text, _HOMEWORK_PATTERNS):
-        return True, None
-
-    # 4. For ambiguous inputs, allow and let the LLM-level guardrail decide
-    return True, None
+def log_refusal(
+    original_input: str,
+    normalized_input: str,
+    stage: str,
+    reason_code: str,
+) -> None:
+    """Emit a structured refusal event for later manual review."""
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": stage,
+        "reason_code": reason_code,
+        "original_input": original_input,
+        "normalized_input": normalized_input,
+    }
+    logger.warning("guardrail_refusal %s", json.dumps(payload, ensure_ascii=False))
 
 
 def detect_academic_level(user_input: str) -> Optional[str]:
