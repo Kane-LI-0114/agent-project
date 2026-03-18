@@ -22,6 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config.settings import DEMO_PROMPTS, ENABLE_BOT_MARKDOWN_LATEX
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 # App & global state
 # --------------------------------------------------------------------------- #
 app = FastAPI(title="CSIT5900 SmartTutor")
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 conversation = ConversationManager()
 handler: ResponseHandler | None = None
