@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from xml.etree import ElementTree
-from typing import Iterable, List, Literal
+from typing import Iterable, List, Literal, cast
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -311,11 +311,14 @@ class SearchService:
                     asyncio.to_thread(self._pubmed_search, query),
                 ]
             )
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = cast(
+            list[List[SearchSource] | BaseException],
+            await asyncio.gather(*tasks, return_exceptions=True),
+        )
 
         merged: List[SearchSource] = []
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.warning("Search source failed for query %r: %s", query, result)
                 continue
             merged.extend(result)
