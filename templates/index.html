@@ -36,6 +36,14 @@
 
     <div class="composer-wrap">
       <div class="composer">
+        <div class="composer-toolbar">
+          <div class="search-toggle" id="searchToggle" role="group" aria-label="Search mode">
+            <button class="search-mode-btn active" type="button" data-mode="auto">Auto Search</button>
+            <button class="search-mode-btn" type="button" data-mode="on">Search On</button>
+            <button class="search-mode-btn" type="button" data-mode="off">Search Off</button>
+          </div>
+          <div class="search-status" id="searchStatus">Auto mode uses search only when the question likely needs live facts or web sources.</div>
+        </div>
         <div class="input-bar">
           <textarea id="userInput" rows="1" placeholder="Message SmartTutor..." onkeydown="handleKey(event)"></textarea>
           <button class="send-btn" id="sendBtn" type="button" onclick="sendMessage()" title="Send">
@@ -59,10 +67,13 @@ let isLoading = false;
 let activeStreamController = null;
 let activeRequestController = null;
 const ENABLE_BOT_MARKDOWN_LATEX = __ENABLE_BOT_MARKDOWN_LATEX__;
+const SEARCH_ENABLED = __SEARCH_ENABLED__;
 const STREAM_FLUSH_INTERVAL = 24;
 const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
 const BOTTOM_STICKY_THRESHOLD = 120;
+const PANEL_TRANSITION_MS = 320;
+let searchMode = SEARCH_ENABLED ? 'auto' : 'off';
 
 const chatArea = document.getElementById('chatArea');
 const welcomeScreen = document.getElementById('welcomeScreen');
@@ -70,6 +81,8 @@ const messageList = document.getElementById('messageList');
 const demoGrid = document.getElementById('demoGrid');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
+const searchToggle = document.getElementById('searchToggle');
+const searchStatus = document.getElementById('searchStatus');
 
 marked.setOptions({
   gfm: true,
@@ -154,6 +167,20 @@ function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+function setSearchMode(mode) {
+  searchMode = mode;
+  const modeLabels = {
+    auto: 'Auto mode uses search only when the question likely needs live facts or web sources.',
+    on: 'Search On adds web, academic, and configured knowledge-page sources before every answer.',
+    off: 'Search Off keeps replies fully local to the model and conversation history.',
+  };
+
+  searchToggle.querySelectorAll('.search-mode-btn').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  });
+  searchStatus.textContent = modeLabels[mode] || '';
+}
+
 function isNearBottom() {
   const distance = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight;
   return distance < BOTTOM_STICKY_THRESHOLD;
@@ -216,15 +243,27 @@ function createStreamingMessage() {
   const shell = document.createElement('div');
   shell.className = 'streaming-shell';
 
+  const pendingPanel = document.createElement('div');
+  pendingPanel.className = 'search-pending';
+  pendingPanel.setAttribute('aria-hidden', 'true');
+
+  const pendingLabel = document.createElement('div');
+  pendingLabel.className = 'search-pending-label';
+  pendingLabel.textContent = 'Searching on Web...';
+
+  pendingPanel.appendChild(pendingLabel);
+
   const content = document.createElement('div');
   content.className = 'streaming-content is-plain';
 
-  const cursor = document.createElement('span');
-  cursor.className = 'stream-cursor';
-  cursor.setAttribute('aria-hidden', 'true');
+  const sourcesPanel = document.createElement('div');
+  sourcesPanel.className = 'message-sources';
+  sourcesPanel.setAttribute('aria-hidden', 'true');
 
+  bubble.appendChild(pendingPanel);
   shell.appendChild(content);
   bubble.appendChild(shell);
+  bubble.appendChild(sourcesPanel);
 
   card.appendChild(bubble);
   row.appendChild(card);
@@ -236,12 +275,16 @@ function createStreamingMessage() {
     bubble,
     shell,
     content,
-    cursor,
+    pendingPanel,
+    sourcesPanel,
     rawText: '',
     displayLength: 0,
     completed: false,
     renderScheduled: false,
     lastRenderAt: 0,
+    searchPending: false,
+    searchSources: [],
+    pendingHideTimer: null,
   };
 }
 
@@ -250,8 +293,9 @@ function finalizeStreamingMessage(streamState) {
 
   streamState.completed = true;
   streamState.bubble.classList.remove('streaming');
+  streamState.bubble.classList.remove('searching');
   renderStreamingContent(streamState, true);
-  streamState.cursor.remove();
+  renderSources(streamState);
 
   scrollToBottom(true);
 }
@@ -262,34 +306,6 @@ function updateStreamingShellLayout(streamState) {
     'p, pre, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, table, .katex-display'
   );
   streamState.shell.classList.toggle('block', hasBlockChildren);
-}
-
-function getCursorAnchor(streamState) {
-  const { content } = streamState;
-  if (!content) return null;
-
-  const candidates = content.querySelectorAll(
-    'p, li, blockquote, pre code, td, th, h1, h2, h3, h4, h5, h6, .katex-display .katex, .katex'
-  );
-
-  if (candidates.length > 0) {
-    return candidates[candidates.length - 1];
-  }
-
-  const lastElement = content.lastElementChild;
-  if (lastElement) {
-    return lastElement;
-  }
-
-  return content;
-}
-
-function placeStreamCursor(streamState) {
-  if (!streamState || !streamState.cursor) return;
-
-  const anchor = getCursorAnchor(streamState);
-  if (!anchor) return;
-  anchor.appendChild(streamState.cursor);
 }
 
 function renderStreamingContent(streamState, finalize = false) {
@@ -311,10 +327,6 @@ function renderStreamingContent(streamState, finalize = false) {
     streamState.content.textContent = '';
     streamState.shell.classList.remove('block');
     return;
-  }
-
-  if (!finalize) {
-    placeStreamCursor(streamState);
   }
 }
 
@@ -374,7 +386,92 @@ function failStream(streamState, message) {
   streamState.rawText = message;
   streamState.displayLength = 0;
   streamState.completed = true;
+  streamState.searchPending = false;
+  streamState.bubble.classList.remove('searching');
+  hidePendingPanel(streamState, true);
   scheduleStreamingFrame(streamState);
+}
+
+function clearPendingHideTimer(streamState) {
+  if (!streamState) return;
+  if (streamState.pendingHideTimer) {
+    clearTimeout(streamState.pendingHideTimer);
+    streamState.pendingHideTimer = null;
+  }
+}
+
+function showPendingPanel(streamState) {
+  if (!streamState) return;
+  clearPendingHideTimer(streamState);
+  streamState.pendingPanel.classList.remove('is-leaving');
+  streamState.pendingPanel.classList.add('is-visible');
+  streamState.pendingPanel.setAttribute('aria-hidden', 'false');
+}
+
+function hidePendingPanel(streamState, immediate = false) {
+  if (!streamState) return;
+  clearPendingHideTimer(streamState);
+  if (immediate) {
+    streamState.pendingPanel.classList.remove('is-visible', 'is-leaving');
+    streamState.pendingPanel.setAttribute('aria-hidden', 'true');
+    return;
+  }
+  streamState.pendingPanel.classList.remove('is-visible');
+  streamState.pendingPanel.classList.add('is-leaving');
+  streamState.pendingHideTimer = setTimeout(() => {
+    streamState.pendingPanel.classList.remove('is-leaving');
+    streamState.pendingPanel.setAttribute('aria-hidden', 'true');
+    streamState.pendingHideTimer = null;
+  }, PANEL_TRANSITION_MS);
+}
+
+function startSearchPending(streamState, sources) {
+  if (!streamState) return;
+  streamState.searchPending = true;
+  streamState.bubble.classList.add('searching');
+  showPendingPanel(streamState);
+  scrollToBottom(true);
+}
+
+function finishSearchPending(streamState, sources) {
+  if (!streamState) return;
+  streamState.searchPending = false;
+  streamState.searchSources = Array.isArray(sources) ? sources.slice(0, 6) : [];
+  streamState.bubble.classList.remove('searching');
+  hidePendingPanel(streamState);
+}
+
+function renderSources(streamState) {
+  if (!streamState || !streamState.sourcesPanel) return;
+  const sources = Array.isArray(streamState.searchSources) ? streamState.searchSources : [];
+  if (sources.length === 0) {
+    streamState.sourcesPanel.classList.remove('is-visible');
+    streamState.sourcesPanel.setAttribute('aria-hidden', 'true');
+    streamState.sourcesPanel.innerHTML = '';
+    return;
+  }
+
+  const details = sources.map(source => `
+    <li class="message-source-item">
+      <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
+        ${escapeHtml(source.title || source.url || 'Source')}
+      </a>
+      <div class="message-source-meta">${escapeHtml(source.provider || 'Source')}</div>
+      <p class="message-source-snippet">${escapeHtml(source.snippet || '')}</p>
+    </li>
+  `).join('');
+
+  streamState.sourcesPanel.innerHTML = `
+    <div class="message-sources-divider" aria-hidden="true"></div>
+    <div class="message-sources-header">
+      <span class="message-sources-count">${sources.length} Sources were used</span>
+    </div>
+    <ul class="message-sources-list">${details}</ul>
+  `;
+  streamState.sourcesPanel.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => {
+    streamState.sourcesPanel.classList.add('is-visible');
+  });
 }
 
 fetch('/api/demos')
@@ -415,7 +512,7 @@ async function sendMessage(text) {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg }),
+      body: JSON.stringify({ message: msg, search_mode: searchMode }),
       signal: activeRequestController.signal,
     });
 
@@ -445,14 +542,18 @@ async function sendMessage(text) {
           if (!trimmed.startsWith('data:')) continue;
 
           const raw = trimmed.slice(5).trim();
-          if (raw === '[DONE]') {
-            doneReceived = true;
-            break;
-          }
-
           try {
-            const { token } = JSON.parse(raw);
-            pushStreamText(streamState, token);
+            const payload = JSON.parse(raw);
+            if (payload.type === 'token' && payload.token) {
+              pushStreamText(streamState, payload.token);
+            } else if (payload.type === 'search_start') {
+              startSearchPending(streamState, payload.sources || []);
+            } else if (payload.type === 'search_end') {
+              finishSearchPending(streamState, payload.sources || []);
+            } else if (payload.type === 'done') {
+              doneReceived = true;
+              break;
+            }
           } catch (_) {
             // Ignore malformed SSE data chunks.
           }
@@ -504,6 +605,21 @@ async function clearChat() {
   userInput.value = '';
   syncTextareaHeight();
   userInput.focus();
+}
+
+if (SEARCH_ENABLED) {
+  searchToggle.addEventListener('click', event => {
+    const button = event.target.closest('.search-mode-btn');
+    if (!button) return;
+    setSearchMode(button.dataset.mode);
+  });
+  setSearchMode(searchMode);
+} else {
+  searchToggle.classList.add('is-disabled');
+  searchToggle.querySelectorAll('.search-mode-btn').forEach(button => {
+    button.disabled = true;
+  });
+  searchStatus.textContent = 'Search is disabled by server configuration.';
 }
 
 syncTextareaHeight();

@@ -24,8 +24,9 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Literal
 
-from config.settings import DEMO_PROMPTS, ENABLE_BOT_MARKDOWN_LATEX
+from config.settings import DEMO_PROMPTS, ENABLE_BOT_MARKDOWN_LATEX, SEARCH_ENABLED
 from core.conversation import ConversationManager
 from core.response_handler import ResponseHandler
 from llm import get_llm_client
@@ -79,10 +80,12 @@ def get_handler() -> ResponseHandler:
 # --------------------------------------------------------------------------- #
 class ChatRequest(BaseModel):
     message: str
+    search_mode: Literal["auto", "on", "off"] = "auto"
 
 
 class ChatResponse(BaseModel):
     reply: str
+    sources: list[dict[str, str]]
 
 
 # --------------------------------------------------------------------------- #
@@ -92,13 +95,13 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest):
     """Process a user message and return the complete reply (non-streaming)."""
     try:
-        reply = await get_handler().handle(req.message)
+        payload = await get_handler().handle(req.message, req.search_mode)
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
-            content={"reply": f"[ERROR] {exc}"},
+            content={"reply": f"[ERROR] {exc}", "sources": []},
         )
-    return ChatResponse(reply=reply)
+    return ChatResponse(reply=payload.reply, sources=payload.sources)
 
 
 @app.post("/api/chat/stream")
@@ -115,17 +118,20 @@ async def chat_stream(req: ChatRequest):
         try:
             response_handler = get_handler()
         except RuntimeError as exc:
-            payload = json.dumps({"token": f"[ERROR] {exc}"}, ensure_ascii=False)
+            payload = json.dumps(
+                {"type": "token", "token": f"[ERROR] {exc}"},
+                ensure_ascii=False,
+            )
             yield f"data: {payload}\n\n"
-            yield "data: [DONE]\n\n"
+            done_payload = json.dumps({"type": "done"}, ensure_ascii=False)
+            yield f"data: {done_payload}\n\n"
             return
 
-        async for chunk in response_handler.handle_stream(req.message):
+        async for event in response_handler.handle_stream(req.message, req.search_mode):
             # JSON-encode the chunk so special characters (newlines, quotes)
             # don't break the SSE framing.
-            payload = json.dumps({"token": chunk}, ensure_ascii=False)
+            payload = json.dumps(event, ensure_ascii=False)
             yield f"data: {payload}\n\n"
-        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -168,6 +174,10 @@ async def index():
     html = html.replace(
         "__ENABLE_BOT_MARKDOWN_LATEX__",
         "true" if ENABLE_BOT_MARKDOWN_LATEX else "false",
+    )
+    html = html.replace(
+        "__SEARCH_ENABLED__",
+        "true" if SEARCH_ENABLED else "false",
     )
     return HTMLResponse(html)
 

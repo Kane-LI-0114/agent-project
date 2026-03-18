@@ -6,6 +6,7 @@ Loads credentials from environment variables via python-dotenv and exposes
 typed settings objects used throughout the application.
 """
 
+import json
 import os
 from typing import List
 
@@ -89,6 +90,66 @@ ENABLE_BOT_MARKDOWN_LATEX: bool = True
 
 
 # --------------------------------------------------------------------------- #
+# Search Settings
+# --------------------------------------------------------------------------- #
+
+SEARCH_ENABLED: bool = os.getenv("SEARCH_ENABLED", "true").lower() == "true"
+
+
+class KnowledgePageConfig(BaseModel):
+    """Static page config used by the lightweight search scraper."""
+
+    name: str
+    url: str
+    keywords: List[str] = Field(default_factory=list)
+
+
+_DEFAULT_KNOWLEDGE_PAGES = [
+    {
+        "name": "Paul's Online Math Notes - Calculus I",
+        "url": "https://tutorial.math.lamar.edu/Classes/CalcI/CalcI.aspx",
+        "keywords": ["calculus", "derivative", "integral", "limit"],
+    },
+    {
+        "name": "Math Is Fun - Algebra Index",
+        "url": "https://www.mathsisfun.com/algebra/index.html",
+        "keywords": ["algebra", "equation", "polynomial", "rational number"],
+    },
+    {
+        "name": "Britannica - History",
+        "url": "https://www.britannica.com/topic/history",
+        "keywords": ["history", "historical", "civilization", "empire"],
+    },
+    {
+        "name": "Britannica - French Revolution",
+        "url": "https://www.britannica.com/event/French-Revolution",
+        "keywords": ["french revolution", "napoleon", "france", "revolution"],
+    },
+]
+
+
+def _load_knowledge_pages() -> List[KnowledgePageConfig]:
+    raw = os.getenv("SEARCH_KNOWLEDGE_PAGES_JSON", "").strip()
+    if not raw:
+        data = _DEFAULT_KNOWLEDGE_PAGES
+    else:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = _DEFAULT_KNOWLEDGE_PAGES
+    pages: List[KnowledgePageConfig] = []
+    for item in data:
+        try:
+            pages.append(KnowledgePageConfig.model_validate(item))
+        except Exception:
+            continue
+    return pages
+
+
+SEARCH_KNOWLEDGE_PAGES: List[KnowledgePageConfig] = _load_knowledge_pages()
+
+
+# --------------------------------------------------------------------------- #
 # System Prompt (Core Guardrails & Behavioral Rules)
 # --------------------------------------------------------------------------- #
 
@@ -104,6 +165,7 @@ SYSTEM_PROMPT: str = """You are SmartTutor, a professional multi-turn homework t
 4.  Multi-turn Conversation: Always reference the previous conversation context to maintain coherent dialog, and answer follow-up questions accurately.
 5.  Conversation Summary: When the user requests a summary of the conversation, provide a clear, complete summary of all previous dialog content.
 6.  Exercise Generation: When the user requests practice exercises, generate targeted, appropriate questions for the specified subject and academic level.
+7.  Search Usage: When live search context is provided, use it carefully, ground factual claims in it when relevant, and keep cited sources concise.
 
 # Rejection Response Examples (You Must Follow This Format):
 - For non-homework travel/daily-life questions: "Sorry I cannot help you on that as it is not a homework question related to math or history."
