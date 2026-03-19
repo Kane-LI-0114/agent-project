@@ -24,6 +24,7 @@ from config.settings import (
     STRICT_GENERATOR_PROMPT,
     STRICT_GENERATOR_TIMEOUT_SECONDS,
     STRICT_INPUT_REVIEW_PROMPT,
+    STRICT_MAX_GENERATION_ATTEMPTS,
     STRICT_OUTPUT_AUDIT_PROMPT,
     STRICT_REFUSAL_MESSAGE,
     STRICT_REVIEWER_TIMEOUT_SECONDS,
@@ -246,69 +247,141 @@ class ResponseHandler:
 
         self._conv.add_user_message(normalized_input)
         search_result = await self._search.maybe_search(normalized_input, search_mode)
-        generator_messages = self._build_messages(search_result, system_override=STRICT_GENERATOR_PROMPT)
-        generator_response = await self._run_text_stage(
-            client=self._strict_generator or self._llm,
-            messages=generator_messages,
-            timeout_seconds=STRICT_GENERATOR_TIMEOUT_SECONDS,
-        )
-        candidate_reply = generator_response["text"]
-        trace[1] = StrictTraceStage(
-            key="answer_generation",
-            title="Answer Generation",
-            status="complete" if candidate_reply else "failed",
-            summary="Candidate answer generated." if candidate_reply else "The generator returned an empty answer.",
-            decision="generated" if candidate_reply else "failed",
-            duration_ms=generator_response["duration_ms"],
-        )
+        search_sources = search_result.to_dict_list() if search_result else []
+        total_generation_ms = 0
+        total_audit_ms = 0
+        final_reply = STRICT_REFUSAL_MESSAGE
+        last_auditor_response: dict[str, Any] | None = None
+        last_feedback: dict[str, str] | None = None
+        approved = False
 
-        audit_payload = {
-            "user_input": normalized_input,
-            "candidate_answer": candidate_reply,
-            "search_context": search_result.to_dict_list() if search_result else [],
-        }
-        auditor_response = await self._run_json_stage(
-            client=self._strict_auditor or self._llm,
-            messages=[
-                {"role": "system", "content": STRICT_OUTPUT_AUDIT_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(audit_payload, ensure_ascii=False),
-                },
-            ],
-            timeout_seconds=STRICT_AUDITOR_TIMEOUT_SECONDS,
-            fallback={
-                "decision": "refuse",
-                "reason_code": "unclear",
-                "summary": "Final audit failed to return a valid decision.",
-                "approved": False,
-            },
-        )
-        approved = auditor_response.get("decision") == "approve" and bool(candidate_reply)
-        trace[2] = StrictTraceStage(
-            key="final_audit",
-            title="Final Audit",
-            status="complete" if approved else "refused",
-            summary=str(auditor_response.get("summary", "Final audit complete.")),
-            decision=str(auditor_response.get("decision", "refuse")),
-            duration_ms=auditor_response.get("_duration_ms", 0),
-        )
+        for attempt in range(1, STRICT_MAX_GENERATION_ATTEMPTS + 1):
+            generator_messages = self._build_strict_generator_messages(
+                search_result=search_result,
+                previous_attempt_feedback=last_feedback,
+            )
+            generator_response = await self._run_text_stage(
+                client=self._strict_generator or self._llm,
+                messages=generator_messages,
+                timeout_seconds=STRICT_GENERATOR_TIMEOUT_SECONDS,
+            )
+            total_generation_ms += generator_response["duration_ms"]
+            candidate_reply = generator_response["text"]
+            trace[1] = StrictTraceStage(
+                key="answer_generation",
+                title="Answer Generation",
+                status="complete" if candidate_reply else "failed",
+                summary=(
+                    f"Generated candidate answer on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}."
+                    if candidate_reply
+                    else f"The generator returned an empty answer on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}."
+                ),
+                decision="generated" if candidate_reply else "failed",
+                duration_ms=total_generation_ms,
+            )
+
+            if not candidate_reply:
+                last_feedback = {
+                    "candidate_answer": "",
+                    "reason_code": "empty_answer",
+                    "summary": "The previous attempt returned an empty answer. Rewrite a complete answer that satisfies strict-mode requirements.",
+                }
+                last_auditor_response = {
+                    "decision": "refuse",
+                    "reason_code": "empty_answer",
+                    "summary": "The generator returned an empty answer.",
+                }
+                if attempt < STRICT_MAX_GENERATION_ATTEMPTS:
+                    trace[2] = StrictTraceStage(
+                        key="final_audit",
+                        title="Final Audit",
+                        status="active",
+                        summary=(
+                            f"No auditable answer was produced on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}. "
+                            f"Regenerating with corrective feedback (attempt {attempt + 1}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+                        ),
+                        decision="retrying",
+                        duration_ms=total_audit_ms,
+                    )
+                    continue
+
+                trace[2] = StrictTraceStage(
+                    key="final_audit",
+                    title="Final Audit",
+                    status="refused",
+                    summary=(
+                        "The generator returned an empty answer on the final attempt. "
+                        f"Maximum attempts reached ({STRICT_MAX_GENERATION_ATTEMPTS}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+                    ),
+                    decision="refuse",
+                    duration_ms=total_audit_ms,
+                )
+                continue
+
+            auditor_response = await self._audit_strict_candidate(
+                normalized_input=normalized_input,
+                candidate_reply=candidate_reply,
+                search_sources=search_sources,
+            )
+            total_audit_ms += auditor_response.get("_duration_ms", 0)
+            last_auditor_response = auditor_response
+            approved = auditor_response.get("decision") == "approve" and bool(candidate_reply)
+
+            if approved:
+                trace[2] = StrictTraceStage(
+                    key="final_audit",
+                    title="Final Audit",
+                    status="complete",
+                    summary=str(auditor_response.get("summary", f"Final audit approved on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}.")),
+                    decision=str(auditor_response.get("decision", "approve")),
+                    duration_ms=total_audit_ms,
+                )
+                final_reply = candidate_reply
+                break
+
+            refusal_summary = str(
+                auditor_response.get(
+                    "summary",
+                    f"Audit failed on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}.",
+                )
+            )
+            if attempt < STRICT_MAX_GENERATION_ATTEMPTS:
+                trace[2] = StrictTraceStage(
+                    key="final_audit",
+                    title="Final Audit",
+                    status="active",
+                    summary=f"{refusal_summary} Regenerating with audit feedback (attempt {attempt + 1}/{STRICT_MAX_GENERATION_ATTEMPTS}).",
+                    decision="retrying",
+                    duration_ms=total_audit_ms,
+                )
+                last_feedback = {
+                    "candidate_answer": candidate_reply,
+                    "reason_code": str(auditor_response.get("reason_code", "unclear")),
+                    "summary": refusal_summary,
+                }
+                continue
+
+            trace[2] = StrictTraceStage(
+                key="final_audit",
+                title="Final Audit",
+                status="refused",
+                summary=f"{refusal_summary} Maximum attempts reached ({STRICT_MAX_GENERATION_ATTEMPTS}/{STRICT_MAX_GENERATION_ATTEMPTS}).",
+                decision=str(auditor_response.get("decision", "refuse")),
+                duration_ms=total_audit_ms,
+            )
 
         if not approved:
             log_refusal(
                 user_input,
                 normalized_input,
                 "output_auditor",
-                str(auditor_response.get("reason_code", "unclear")),
+                str((last_auditor_response or {}).get("reason_code", "unclear")),
             )
-            final_reply = STRICT_REFUSAL_MESSAGE
-        else:
-            final_reply = candidate_reply
 
         self._conv.add_assistant_message(final_reply)
         return ResponsePayload(
             reply=final_reply,
-            sources=search_result.to_dict_list() if search_result else [],
+            sources=search_sources,
             mode="strict",
             strict_trace=[asdict(stage) for stage in trace],
         )
@@ -433,116 +506,168 @@ class ResponseHandler:
 
         self._conv.add_user_message(normalized_input)
         should_search = self._search.should_execute(normalized_input, search_mode)
+        optimized_queries: list[str] = []
         if should_search:
+            optimized_queries = await self._search.expand_queries(normalized_input)
             yield {
                 "type": "search_start",
                 "sources": self._search.get_pending_sources(normalized_input),
+                "queries": optimized_queries,
             }
-        search_result = await self._search.maybe_search(normalized_input, search_mode)
+        search_result = (
+            await self._search.search_many(normalized_input, optimized_queries)
+            if should_search
+            else await self._search.maybe_search(normalized_input, search_mode)
+        )
         if should_search:
             yield {
                 "type": "search_end",
                 "sources": search_result.to_dict_list() if search_result else [],
             }
+        search_sources = search_result.to_dict_list() if search_result else []
+        total_generation_ms = 0
+        total_audit_ms = 0
+        approved = False
+        final_reply = STRICT_REFUSAL_MESSAGE
+        last_auditor_response: dict[str, Any] | None = None
+        last_feedback: dict[str, str] | None = None
 
-        generator_messages = self._build_messages(search_result, system_override=STRICT_GENERATOR_PROMPT)
-        generator_started = time.perf_counter()
-        candidate_reply = ""
-        try:
-            async for chunk in self._strict_generator_or_default().chat_stream(generator_messages):
-                if not chunk:
-                    continue
-                candidate_reply += chunk
-        except (RuntimeError, ValueError, OSError) as exc:
-            logger.error("Strict generator stream failed: %s", exc)
-
-        trace[1].duration_ms = int((time.perf_counter() - generator_started) * 1000)
-        candidate_reply = candidate_reply.strip()
-        trace[1].status = "complete" if candidate_reply else "failed"
-        generation_summary = (
-            "Candidate answer generated and handed off to the final audit step."
-            if candidate_reply
-            else "The generator returned an empty answer."
-        )
-        trace[1].summary = ""
-        trace[1].decision = "generated" if candidate_reply else "failed"
-        yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-        async for event in self._stream_stage_summary(trace, 1, generation_summary):
-            yield event
-
-        if not candidate_reply:
-            trace[2].status = "skipped"
-            trace[2].decision = "skipped"
-            trace[2].summary = "Skipped because no candidate answer was generated."
-            final_reply = STRICT_REFUSAL_MESSAGE
-            self._conv.add_assistant_message(final_reply)
+        for attempt in range(1, STRICT_MAX_GENERATION_ATTEMPTS + 1):
+            trace[1].status = "active"
+            trace[1].decision = "running"
+            trace[1].summary = f"Generating candidate answer (attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS})."
             yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-            yield {
-                "type": "strict_final",
-                "reply": final_reply,
-                "sources": search_result.to_dict_list() if search_result else [],
+
+            generator_messages = self._build_strict_generator_messages(
+                search_result=search_result,
+                previous_attempt_feedback=last_feedback,
+            )
+            generator_started = time.perf_counter()
+            candidate_reply = ""
+            try:
+                async for chunk in self._strict_generator_or_default().chat_stream(generator_messages):
+                    if not chunk:
+                        continue
+                    candidate_reply += chunk
+            except (RuntimeError, ValueError, OSError) as exc:
+                logger.error("Strict generator stream failed: %s", exc)
+
+            generation_duration_ms = int((time.perf_counter() - generator_started) * 1000)
+            total_generation_ms += generation_duration_ms
+            trace[1].duration_ms = total_generation_ms
+            candidate_reply = candidate_reply.strip()
+            trace[1].status = "complete" if candidate_reply else "failed"
+            trace[1].summary = ""
+            trace[1].decision = "generated" if candidate_reply else "failed"
+            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+            generation_summary = (
+                f"Candidate answer generated on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS} and handed off to the final audit step."
+                if candidate_reply
+                else f"The generator returned an empty answer on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}."
+            )
+            async for event in self._stream_stage_summary(trace, 1, generation_summary):
+                yield event
+
+            if not candidate_reply:
+                last_feedback = {
+                    "candidate_answer": "",
+                    "reason_code": "empty_answer",
+                    "summary": "The previous attempt returned an empty answer. Rewrite a complete answer that satisfies strict-mode requirements.",
+                }
+                last_auditor_response = {
+                    "decision": "refuse",
+                    "reason_code": "empty_answer",
+                    "summary": "The generator returned an empty answer.",
+                }
+                if attempt < STRICT_MAX_GENERATION_ATTEMPTS:
+                    trace[2].status = "active"
+                    trace[2].decision = "retrying"
+                    trace[2].duration_ms = total_audit_ms
+                    trace[2].summary = (
+                        f"No auditable answer was produced on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}; retrying generation "
+                        f"with corrective feedback (attempt {attempt + 1}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+                    )
+                    yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+                    continue
+
+                trace[2].status = "refused"
+                trace[2].decision = "refuse"
+                trace[2].duration_ms = total_audit_ms
+                trace[2].summary = (
+                    f"The generator returned an empty answer on the final attempt. Maximum attempts reached "
+                    f"({STRICT_MAX_GENERATION_ATTEMPTS}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+                )
+                yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+                break
+
+            trace[2].status = "active"
+            trace[2].decision = "running"
+            trace[2].summary = f"Auditing candidate answer (attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+
+            auditor_response = await self._audit_strict_candidate(
+                normalized_input=normalized_input,
+                candidate_reply=candidate_reply,
+                search_sources=search_sources,
+            )
+            last_auditor_response = auditor_response
+            total_audit_ms += auditor_response.get("_duration_ms", 0)
+            approved = auditor_response.get("decision") == "approve"
+            audit_summary = str(
+                auditor_response.get(
+                    "summary",
+                    f"Final audit finished on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}.",
+                )
+            )
+            trace[2].summary = ""
+            trace[2].decision = str(auditor_response.get("decision", "refuse"))
+            trace[2].duration_ms = total_audit_ms
+            trace[2].status = "complete" if approved else "refused"
+            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+            async for event in self._stream_stage_summary(trace, 2, audit_summary):
+                yield event
+
+            if approved:
+                final_reply = candidate_reply
+                break
+
+            refusal_summary = audit_summary or "The candidate answer did not pass the final audit."
+            last_feedback = {
+                "candidate_answer": candidate_reply,
+                "reason_code": str(auditor_response.get("reason_code", "unclear")),
+                "summary": refusal_summary,
             }
-            yield {"type": "done"}
-            return
+            if attempt < STRICT_MAX_GENERATION_ATTEMPTS:
+                trace[2].status = "active"
+                trace[2].decision = "retrying"
+                trace[2].summary = (
+                    f"Audit failed on attempt {attempt}/{STRICT_MAX_GENERATION_ATTEMPTS}; regenerating with the previous "
+                    f"audit failure reason (attempt {attempt + 1}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+                )
+                yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+                continue
 
-        trace[2].status = "active"
-        trace[2].decision = "running"
-        trace[2].summary = "Auditing the generated answer before revealing it."
-        yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-
-        audit_payload = {
-            "user_input": normalized_input,
-            "candidate_answer": candidate_reply,
-            "search_context": search_result.to_dict_list() if search_result else [],
-        }
-        auditor_response = await self._run_json_stage(
-            client=self._strict_auditor or self._llm,
-            messages=[
-                {"role": "system", "content": STRICT_OUTPUT_AUDIT_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(audit_payload, ensure_ascii=False),
-                },
-            ],
-            timeout_seconds=STRICT_AUDITOR_TIMEOUT_SECONDS,
-            fallback={
-                "decision": "refuse",
-                "reason_code": "unclear",
-                "summary": "Final audit failed to return a valid decision.",
-                "approved": False,
-            },
-        )
-        approved = auditor_response.get("decision") == "approve"
-        audit_summary = str(auditor_response.get("summary", "Final audit complete."))
-        trace[2] = StrictTraceStage(
-            key="final_audit",
-            title="Final Audit",
-            status="complete" if approved else "refused",
-            summary="",
-            decision=str(auditor_response.get("decision", "refuse")),
-            duration_ms=auditor_response.get("_duration_ms", 0),
-        )
-        yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-        async for event in self._stream_stage_summary(trace, 2, audit_summary):
-            yield event
+            trace[2].status = "refused"
+            trace[2].decision = str(auditor_response.get("decision", "refuse"))
+            trace[2].summary = (
+                f"{refusal_summary} Maximum attempts reached ({STRICT_MAX_GENERATION_ATTEMPTS}/{STRICT_MAX_GENERATION_ATTEMPTS})."
+            )
+            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
 
         if not approved:
             log_refusal(
                 user_input,
                 normalized_input,
                 "output_auditor",
-                str(auditor_response.get("reason_code", "unclear")),
+                str((last_auditor_response or {}).get("reason_code", "unclear")),
             )
-            final_reply = STRICT_REFUSAL_MESSAGE
-        else:
-            final_reply = candidate_reply
 
         self._conv.add_assistant_message(final_reply)
         yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
         yield {
             "type": "strict_final",
             "reply": final_reply,
-            "sources": search_result.to_dict_list() if search_result else [],
+            "sources": search_sources,
         }
         yield {"type": "done"}
 
@@ -574,12 +699,19 @@ class ResponseHandler:
 
         self._conv.add_user_message(prefilter.normalized_input)
         should_search = self._search.should_execute(prefilter.normalized_input, search_mode)
+        optimized_queries: list[str] = []
         if should_search:
+            optimized_queries = await self._search.expand_queries(prefilter.normalized_input)
             yield {
                 "type": "search_start",
                 "sources": self._search.get_pending_sources(prefilter.normalized_input),
+                "queries": optimized_queries,
             }
-        search_result = await self._search.maybe_search(prefilter.normalized_input, search_mode)
+        search_result = (
+            await self._search.search_many(prefilter.normalized_input, optimized_queries)
+            if should_search
+            else await self._search.maybe_search(prefilter.normalized_input, search_mode)
+        )
         if should_search:
             yield {
                 "type": "search_end",
@@ -619,6 +751,62 @@ class ResponseHandler:
             "content": search_result.to_system_message(),
         }
         return messages[:-1] + [search_message, messages[-1]]
+
+    def _build_strict_generator_messages(
+        self,
+        search_result: SearchResult | None,
+        previous_attempt_feedback: Optional[dict[str, str]] = None,
+    ) -> list[dict[str, str]]:
+        """Build generator messages, optionally including prior audit failure feedback."""
+        messages = self._build_messages(search_result, system_override=STRICT_GENERATOR_PROMPT)
+        if not previous_attempt_feedback:
+            return messages
+
+        candidate_answer = previous_attempt_feedback.get("candidate_answer", "").strip() or "[empty answer]"
+        reason_code = previous_attempt_feedback.get("reason_code", "").strip() or "unclear"
+        summary = (
+            previous_attempt_feedback.get("summary", "").strip()
+            or "The previous attempt did not pass final audit. Rewrite the answer to fix the issue."
+        )
+        feedback_message = (
+            "The previous draft failed final audit. Rewrite the answer so it addresses the audit failure and remains concise, "
+            "educational, and within policy.\n\n"
+            f"Previous candidate answer:\n{candidate_answer}\n\n"
+            f"Audit reason code: {reason_code}\n"
+            f"Audit summary: {summary}\n\n"
+            "Do not repeat the previous answer verbatim. Produce a corrected final answer only."
+        )
+        return messages + [{"role": "system", "content": feedback_message}]
+
+    async def _audit_strict_candidate(
+        self,
+        normalized_input: str,
+        candidate_reply: str,
+        search_sources: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Run the strict final audit for a candidate answer."""
+        audit_payload = {
+            "user_input": normalized_input,
+            "candidate_answer": candidate_reply,
+            "search_context": search_sources,
+        }
+        return await self._run_json_stage(
+            client=self._strict_auditor or self._llm,
+            messages=[
+                {"role": "system", "content": STRICT_OUTPUT_AUDIT_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(audit_payload, ensure_ascii=False),
+                },
+            ],
+            timeout_seconds=STRICT_AUDITOR_TIMEOUT_SECONDS,
+            fallback={
+                "decision": "refuse",
+                "reason_code": "unclear",
+                "summary": "Final audit failed to return a valid decision.",
+                "approved": False,
+            },
+        )
 
     async def _run_text_stage(
         self,
