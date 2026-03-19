@@ -131,6 +131,25 @@ _HOMEWORK_PATTERNS: List[str] = [
     r"\bstatistics\b",
 ]
 
+_EXPLICIT_ACADEMIC_CUE_PATTERNS: List[str] = [
+    r"\bhomework\b",
+    r"\bassignment\b",
+    r"\bexam\b",
+    r"\bquiz\b",
+    r"\bexercise\b",
+    r"\bpractice\b",
+    r"\bstudy\b",
+    r"\brevision\b",
+    r"\bcourse\b",
+    r"\bclass\b",
+    r"\blecture\b",
+    r"\bstudent\b",
+    r"\bteacher\b",
+    r"\bprofessor\b",
+    r"\btutor(?:ing)?\b",
+    r"\bsubject\b",
+]
+
 _META_PATTERNS: List[str] = [
     r"\bsummar\w*\b.*\bconversation\b",
     r"\bconversation\b.*\bsummar\w*\b",
@@ -139,6 +158,93 @@ _META_PATTERNS: List[str] = [
     r"\byear\s*\d+\b.*\bstudent\b",
     r"\bacademic\s*level\b",
     r"\bprovide\s+your\s+answers\s+accordingly\b",
+]
+
+_ALLOWED_SUBJECT_PATTERNS: List[str] = [
+    r"\bmath(?:ematics)?\b",
+    r"\balgebra\b",
+    r"\bgeometry\b",
+    r"\bcalculus\b",
+    r"\btrigonometry\b",
+    r"\bprobability\b",
+    r"\bstatistics?\b",
+    r"\bnumber theory\b",
+    r"\bhistory\b",
+    r"\bhistorical\b",
+    r"\bcivilization\b",
+    r"\bempire\b",
+    r"\bwar\b",
+    r"\brevolution\b",
+    r"\bgeography\b",
+    r"\bmap\b",
+    r"\bclimate\b",
+    r"\bmonsoon\b",
+    r"\bfinance\b",
+    r"\beconomics?\b",
+    r"\bphilosophy\b",
+    r"\bethics\b",
+    r"\bchemistry\b",
+    r"\bchemical\b",
+    r"\bperiodic table\b",
+    r"\bmolecule\b",
+    r"\batom\b",
+]
+
+_OUT_OF_SCOPE_SUBJECT_PATTERNS: List[str] = [
+    r"\bbiology\b",
+    r"\bphotosynthesis\b",
+    r"\bcell(?:s|ular)?\b",
+    r"\bgenetics?\b",
+    r"\bphysics\b",
+    r"\bmechanics\b",
+    r"\belectricity\b",
+    r"\bmagnetism\b",
+    r"\bprogramming\b",
+    r"\bcoding\b",
+    r"\bcomputer science\b",
+    r"\bdata structure(?:s)?\b",
+    r"\balgorithm(?:s)?\b",
+    r"\bliterature\b",
+    r"\benglish\b",
+    r"\bpoetry\b",
+    r"\bgrammar\b",
+    r"\bmedical\b",
+    r"\bmedicine\b",
+    r"\banatomy\b",
+    r"\bpsychology\b",
+    r"\bsociology\b",
+    r"\blaw\b",
+]
+
+_ORG_HINT_PATTERNS: List[str] = [
+    r"\buniversity\b",
+    r"\bcollege\b",
+    r"\bschool\b",
+    r"\bdepartment\b",
+    r"\bfaculty\b",
+    r"\blab(?:oratory)?\b",
+    r"\binstitute\b",
+    r"\bcompany\b",
+    r"\bbrand\b",
+    r"\borganisation\b",
+    r"\borganization\b",
+    r"\bcampus\b",
+    r"\bhkust\b",
+]
+
+_ORG_ADMIN_PATTERNS: List[str] = [
+    r"\bfirst president\b",
+    r"\bpresident\b",
+    r"\bfound(?:er|ed|ing)\b",
+    r"\bprincipal\b",
+    r"\bchancellor\b",
+    r"\bvice[- ]?chancellor\b",
+    r"\bprovost\b",
+    r"\bdean\b",
+    r"\bdirector\b",
+    r"\bhead of\b",
+    r"\bleadership\b",
+    r"\badministration\b",
 ]
 
 _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
@@ -246,6 +352,26 @@ def _find_rule_matches(text: str) -> list[str]:
     return sorted(set(matches))
 
 
+def _looks_homework_like(text: str) -> bool:
+    return _matches_any(text, _HOMEWORK_PATTERNS) or _matches_any(text, _META_PATTERNS)
+
+
+def _has_explicit_academic_cue(text: str) -> bool:
+    return _matches_any(text, _EXPLICIT_ACADEMIC_CUE_PATTERNS) or _matches_any(text, _META_PATTERNS)
+
+
+def _mentions_allowed_subject(text: str) -> bool:
+    return _matches_any(text, _ALLOWED_SUBJECT_PATTERNS)
+
+
+def _mentions_out_of_scope_subject(text: str) -> bool:
+    return _matches_any(text, _OUT_OF_SCOPE_SUBJECT_PATTERNS)
+
+
+def _looks_like_local_institution_admin_query(text: str) -> bool:
+    return _matches_any(text, _ORG_ADMIN_PATTERNS) and _matches_any(text, _ORG_HINT_PATTERNS)
+
+
 def prefilter_input(user_input: str) -> InputGuardResult:
     """Run local layered filtering before any LLM-based review."""
     raw_text = user_input.strip()
@@ -279,15 +405,36 @@ def prefilter_input(user_input: str) -> InputGuardResult:
             encoding=encoding,
         )
 
-    if _matches_any(normalized_text, _LIFE_PATTERNS) and not _matches_any(
-        normalized_text,
-        _HOMEWORK_PATTERNS,
-    ):
+    if _looks_like_local_institution_admin_query(normalized_text):
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="out_of_scope_local_admin",
+            stage="prefilter",
+            encoding=encoding,
+        )
+
+    if _matches_any(normalized_text, _LIFE_PATTERNS) and not _has_explicit_academic_cue(normalized_text):
         return InputGuardResult(
             allowed=False,
             normalized_input=normalized_text,
             rejection_reason=STRICT_REFUSAL_MESSAGE,
             reason_code="non_homework",
+            stage="prefilter",
+            encoding=encoding,
+        )
+
+    if (
+        _looks_homework_like(normalized_text)
+        and _mentions_out_of_scope_subject(normalized_text)
+        and not _mentions_allowed_subject(normalized_text)
+    ):
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="out_of_scope_subject",
             stage="prefilter",
             encoding=encoding,
         )

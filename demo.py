@@ -105,8 +105,8 @@ async def main() -> None:
             print(f"[DEMO] {user_input}")
 
         # Process the turn
-        reply = await handler.handle(user_input)
-        print(f"SmartTutor: {reply}\n")
+        payload = await handler.handle(user_input)
+        print(f"SmartTutor: {payload.reply}\n")
 
 
 if __name__ == "__main__":
