@@ -68,13 +68,13 @@ MAX_HISTORY_TOKENS = 6000
 MAX_HISTORY_TURNS = 40
 
 # Allowed subjects
-ALLOWED_SUBJECTS = ["math", "history", "finance", "economics", "philosophy", "chemistry"]
+ALLOWED_SUBJECTS = ["math", "history", "geography", "finance", "economics", "philosophy", "chemistry"]
 
 # System prompt
 SYSTEM_PROMPT = """You are SmartTutor, a professional multi-turn homework tutoring agent developed for the CSIT5900 course project. Your core design principles are RELIABILITY and STRICT GUARDRAILS.
 
 # Core Rules You MUST Follow 100% of the Time:
-1.  Allowed Subjects: You can only answer homework questions related to math and history. You may also answer questions from finance, economics, philosophy, chemistry if the user requests, but never answer questions outside these subjects.
+1.  Allowed Subjects: You can only answer homework questions related to math and history. You may also answer questions from geography, finance, economics, philosophy, chemistry if the user requests, but never answer questions outside these subjects.
 2.  Guardrails Enforcement:
     - Reject ALL non-homework related questions, with a clear reason consistent with the examples.
     - Reject questions outside allowed subjects, with a clear reason.
@@ -85,7 +85,7 @@ SYSTEM_PROMPT = """You are SmartTutor, a professional multi-turn homework tutori
 6.  Exercise Generation: When the user requests practice exercises, generate targeted, appropriate questions for the specified subject and academic level.
 
 # Rejection Response Examples (You Must Follow This Format):
-- For non-homework travel/daily-life questions: "Sorry I cannot help you on that as it is not a homework question related to math or history."
+- For non-homework travel/daily-life questions: "Sorry I cannot help you on that as it is not a homework question related to allowed subjects such as math, history, or geography."
 - For off-subject non-homework questions: "Sorry that is not likely a history homework question as it is about a local small university."
 - For other off-topic questions: "Sorry that is not a homework question."
 
@@ -95,6 +95,7 @@ You must never break these rules under any circumstances."""
 DEMO_PROMPTS: Dict[str, str] = {
     "demo-math": "Is square root of 1000 a rational number?",
     "demo-history": "Who was the first president of France?",
+    "demo-geography": "What causes monsoon climates?",
     "demo-reject1": "I need to travel to London from Hong Kong. What is the best way?",
     "demo-reject2": "Who was the first president of Hong Kong University of Science and Technology in Hong Kong?",
     "demo-summary": "Can you summarise our conversation so far?",
@@ -218,7 +219,8 @@ _HOMEWORK_PATTERNS = [
     r"\bsquare root\b", r"\bequation\b", r"\btheorem\b", r"\bhistory\b",
     r"\bpresident\b", r"\bwar\b", r"\brevolution\b", r"\bintegral\b",
     r"\bderivative\b", r"\bcalculus\b", r"\balgebra\b", r"\bgeometry\b",
-    r"\bmath\b", r"\bphilosophy\b", r"\bchemistry\b", r"\beconomics\b",
+    r"\bmath\b", r"\bgeography\b", r"\bmap\b", r"\bclimate\b",
+    r"\bphilosophy\b", r"\bchemistry\b", r"\beconomics\b",
     r"\bfinance\b", r"\bsummar\w*\b", r"\bconversation\b",
     r"\brational\b", r"\birrational\b", r"\bfactor\b", r"\bformula\b",
     r"\bprobability\b", r"\bstatistics\b",
@@ -246,7 +248,7 @@ def check_input(user_input: str) -> Tuple[bool, Optional[str]]:
     if _matches_any(text, _LIFE_PATTERNS) and not _matches_any(text, _HOMEWORK_PATTERNS):
         return False, (
             "Sorry I cannot help you on that as it is not a homework question "
-            "related to math or history."
+            "related to allowed subjects such as math, history, or geography."
         )
     if _matches_any(text, _HOMEWORK_PATTERNS):
         return True, None

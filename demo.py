@@ -4,7 +4,7 @@ demo.py
 Main CLI demo entry point for the CSIT5900 Multi-turn Homework Tutoring Agent.
 
 Provides an interactive command-line interface that demonstrates:
-- Valid math and history homework questions
+- Valid math, history, and geography homework questions
 - Guardrail rejections for non-homework or off-subject inputs
 - Multi-turn follow-up conversations
 - Academic level adaptation
@@ -18,6 +18,7 @@ Usage
 Built-in shortcut commands (type the keyword and press Enter):
     demo-math     -> Valid math question
     demo-history  -> Valid history question
+    demo-geography -> Valid geography question
     demo-reject1  -> Non-homework daily-life question (rejected)
     demo-reject2  -> Off-subject question about a local university (rejected)
     demo-summary  -> Request conversation summary

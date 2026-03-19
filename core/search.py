@@ -70,6 +70,7 @@ _ACADEMIC_KEYWORDS = (
     "geometry",
     "statistics",
     "chemistry",
+    "geography",
     "finance",
     "economics",
     "philosophy",
@@ -279,6 +280,10 @@ class SearchService:
             "dynasty",
             "france",
             "rome",
+            "river",
+            "mountain",
+            "climate",
+            "map",
         )
 
         if any(token in lower for token in search_triggers):

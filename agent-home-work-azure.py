@@ -1,5 +1,5 @@
 """
-Interactive homework helper CLI using Azure OpenAI (history/philosophy) and DeepSeek (math).
+Interactive homework helper CLI using Azure OpenAI (history/philosophy/geography) and DeepSeek (math).
 Loads credentials from .env via python-dotenv. Guardrail checks ensure prompts look like homework.
 """
 
@@ -40,6 +40,10 @@ DEMOS: Dict[str, str] = {
     "demo-history": (
         "This is for my history homework: Who was the first president of the United States? "
         "Give a concise answer with one key fact."
+    ),
+    "demo-geography": (
+        "This is for my geography homework: What factors affect a region's climate? "
+        "Give a concise answer with two key points."
     ),
     "demo-life": (
         "What is the meaning of life?"
@@ -112,7 +116,7 @@ def build_guardrail_agent(model: OpenAIChatCompletionsModel) -> Agent:
         instructions=(
             "Decide if the user is asking about homework. "
             "Return is_homework=true only when the query clearly requests help with a school or "
-            "class assignment (history, math, etc.)."
+            "class assignment (history, math, geography, etc.)."
         ),
         output_type=HomeworkOutput,
         model=model,
@@ -150,12 +154,19 @@ history_tutor_agent = Agent(
     model=azure_model,
 )
 
+geography_tutor_agent = Agent(
+    name="Geography Tutor",
+    handoff_description="Specialist agent for geography questions",
+    instructions="You help with geography homework. Explain concepts clearly and concisely, using examples when helpful.",
+    model=azure_model,
+)
+
 # Triage Agent uses Azure by default, hands off to specialists, and enforces guardrail
 triage_agent = Agent(
     name="Triage Agent",
     instructions="You determine which agent should answer this homework question.",
     model=azure_model,
-    handoffs=[history_tutor_agent, math_tutor_agent],
+    handoffs=[history_tutor_agent, geography_tutor_agent, math_tutor_agent],
     input_guardrails=[
         InputGuardrail(guardrail_function=homework_guardrail),
     ],
@@ -170,7 +181,8 @@ def print_header() -> None:
     print("--- Homework Helper CLI (Azure + DeepSeek) ---")
     print("Type a homework question and press Enter. Type 'exit' or 'quit' to stop.")
     print("Commands:")
-    print("  demo-history -> History homework: Who was the first president of the United States?")
+    print("  demo-history   -> History homework: Who was the first president of the United States?")
+    print("  demo-geography -> Geography homework: What factors affect a region's climate?")
     print("  demo-math    -> Algebra homework: Solve 2x + 3 = 15 for x and show your steps.")
     print("  demo-life    -> What is the meaning of life?")
 

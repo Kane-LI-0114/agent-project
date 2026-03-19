@@ -4,7 +4,7 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 
 ## Features
 
-- **Dual Subject Support** – Math and History homework tutoring (mandatory), with optional coverage for Finance, Economics, Philosophy, Chemistry.
+- **Multi-Subject Support** – Math and History homework tutoring (mandatory), with optional coverage for Geography, Finance, Economics, Philosophy, Chemistry.
 - **Dual Guardrails** – Code-level pre-check (regex/heuristic) + LLM system-prompt enforcement to reject non-homework or off-subject inputs.
 - **Multi-turn Conversation** – Full conversation memory with automatic token-based truncation to prevent context window overflow.
 - **Academic Level Adaptation** – Adjusts answer depth based on the user's stated academic background.
@@ -135,6 +135,7 @@ Type any of these keywords at the prompt to trigger built-in test cases:
 |-----------------|---------------------------------------------------------------------------|
 | `demo-math`     | Valid math question: *Is square root of 1000 a rational number?*           |
 | `demo-history`  | Valid history question: *Who was the first president of France?*            |
+| `demo-geography`| Valid geography question: *What causes monsoon climates?*                    |
 | `demo-reject1`  | Non-homework rejection: *I need to travel to London from Hong Kong...*     |
 | `demo-reject2`  | Off-subject rejection: *Who was the first president of HKUST?*             |
 | `demo-summary`  | Conversation summary: *Can you summarise our conversation so far?*         |
@@ -154,7 +155,8 @@ The agent has been tested against the following mandatory examples:
 5. **Conversation Summary** – `Can you summarise our conversation so far?` → Complete summary
 6. **Academic Level** – `I'm a university year one student...` → Acknowledged, answers adapted
 7. **Practice Exercises** – `I want to practice calculus for my final in math101...` → Generated exercises
-8. **Multi-turn Follow-up** – Follow-up questions maintain context coherence
+8. **Geography Support** – Geography homework questions are now treated as in-scope subject requests
+9. **Multi-turn Follow-up** – Follow-up questions maintain context coherence
 
 ## Architecture
 
