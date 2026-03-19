@@ -70,11 +70,28 @@ MAX_HISTORY_TURNS = 40
 # Allowed subjects
 ALLOWED_SUBJECTS = ["math", "history", "geography", "finance", "economics", "philosophy", "chemistry"]
 
+
+def _format_subject_list(subjects):
+    if not subjects:
+        return ""
+    if len(subjects) == 1:
+        return subjects[0]
+    if len(subjects) == 2:
+        return f"{subjects[0]} and {subjects[1]}"
+    return ", ".join(subjects[:-1]) + f", and {subjects[-1]}"
+
+
+MANDATORY_SUBJECTS = ALLOWED_SUBJECTS[:2]
+OPTIONAL_SUBJECTS = ALLOWED_SUBJECTS[2:]
+_ALLOWED_SUBJECTS_TEXT = _format_subject_list(ALLOWED_SUBJECTS)
+_MANDATORY_SUBJECTS_TEXT = _format_subject_list(MANDATORY_SUBJECTS)
+_EXAMPLE_SUBJECTS_TEXT = _format_subject_list(ALLOWED_SUBJECTS[:3])
+
 # System prompt
-SYSTEM_PROMPT = """You are SmartTutor, a professional multi-turn homework tutoring agent developed for the CSIT5900 course project. Your core design principles are RELIABILITY and STRICT GUARDRAILS.
+SYSTEM_PROMPT = f"""You are SmartTutor, a professional multi-turn homework tutoring agent developed for the CSIT5900 course project. Your core design principles are RELIABILITY and STRICT GUARDRAILS.
 
 # Core Rules You MUST Follow 100% of the Time:
-1.  Allowed Subjects: You can only answer homework questions related to math and history. You may also answer questions from geography, finance, economics, philosophy, chemistry if the user requests, but never answer questions outside these subjects.
+1.  Allowed Subjects: You can only answer homework questions related to {_MANDATORY_SUBJECTS_TEXT}. You may also answer questions from {_format_subject_list(OPTIONAL_SUBJECTS)} if the user requests, but never answer questions outside these subjects.
 2.  Guardrails Enforcement:
     - Reject ALL non-homework related questions, with a clear reason consistent with the examples.
     - Reject questions outside allowed subjects, with a clear reason.
@@ -85,7 +102,7 @@ SYSTEM_PROMPT = """You are SmartTutor, a professional multi-turn homework tutori
 6.  Exercise Generation: When the user requests practice exercises, generate targeted, appropriate questions for the specified subject and academic level.
 
 # Rejection Response Examples (You Must Follow This Format):
-- For non-homework travel/daily-life questions: "Sorry I cannot help you on that as it is not a homework question related to allowed subjects such as math, history, or geography."
+- For non-homework travel/daily-life questions: "Sorry I cannot help you on that as it is not a homework question related to allowed subjects such as {_EXAMPLE_SUBJECTS_TEXT}."
 - For off-subject non-homework questions: "Sorry that is not likely a history homework question as it is about a local small university."
 - For other off-topic questions: "Sorry that is not a homework question."
 
