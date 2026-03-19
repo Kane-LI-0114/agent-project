@@ -21,11 +21,6 @@
     <div class="header">
       <div class="header-inner">
         <div class="brand">
-          <div class="brand-mark" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
           <div class="brand-copy">
             <h1>SmartTutor</h1>
             <p>CSIT5900 homework assistant</p>
@@ -40,13 +35,6 @@
         <div class="welcome" id="welcomeScreen">
           <div class="welcome-badge">SmartTutor for CSIT5900</div>
           <div class="welcome-panel">
-            <div class="welcome-orbit welcome-orbit-a" aria-hidden="true"></div>
-            <div class="welcome-orbit welcome-orbit-b" aria-hidden="true"></div>
-            <div class="welcome-signal" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
             <h2>What can I help with for your coursework today?</h2>
           </div>
           <div class="demo-grid" id="demoGrid"></div>
@@ -115,6 +103,8 @@ const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
 const BOTTOM_STICKY_THRESHOLD = 120;
 const PANEL_TRANSITION_MS = 320;
+const SOURCES_PANEL_TRANSITION_MS = 420;
+const SOURCES_WIDTH_COLLAPSE_MS = 380;
 let sourcesDisclosureId = 0;
 const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
 const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
@@ -400,9 +390,9 @@ function createStreamingMessage() {
   shell.appendChild(inlinePending);
   shell.appendChild(content);
   bubble.appendChild(shell);
-  bubble.appendChild(sourcesPanel);
 
   card.appendChild(bubble);
+  card.appendChild(sourcesPanel);
   row.appendChild(card);
   messageList.appendChild(row);
   scrollToBottom(true);
@@ -474,10 +464,10 @@ function createStrictMessage() {
 
   finalAnswer.appendChild(finalLabel);
   finalAnswer.appendChild(finalContent);
-  finalAnswer.appendChild(sourcesPanel);
   strictWrap.appendChild(strictHeader);
   strictWrap.appendChild(cards);
   strictWrap.appendChild(finalAnswer);
+  strictWrap.appendChild(sourcesPanel);
   bubble.appendChild(strictWrap);
   card.appendChild(bubble);
   row.appendChild(card);
@@ -612,7 +602,7 @@ function renderFinalAnswer(container, text) {
   }
 }
 
-function animateSourcesBody(body, expand) {
+function animateSourcesBody(body, expand, onComplete) {
   if (!body) return;
 
   if (body._sourcesAnimationFrame) {
@@ -627,32 +617,41 @@ function animateSourcesBody(body, expand) {
 
   body.style.overflow = 'hidden';
   body.style.willChange = 'height, opacity, transform';
+  body.style.setProperty('--sources-body-duration', `${SOURCES_PANEL_TRANSITION_MS}ms`);
   body.hidden = false;
 
+  const queueFrame = callback => {
+    body._sourcesAnimationFrame = requestAnimationFrame(() => {
+      body._sourcesAnimationFrame = requestAnimationFrame(callback);
+    });
+  };
+
   if (expand) {
-    const startHeight = body.getBoundingClientRect().height;
+    body.classList.add('is-animating');
+    const startHeight = body.hidden ? 0 : body.getBoundingClientRect().height;
     body.style.height = `${startHeight}px`;
     body.style.opacity = startHeight > 0 ? '1' : '0';
     body.style.transform = startHeight > 0 ? 'translateY(0)' : 'translateY(-4px)';
     void body.offsetHeight;
 
     const endHeight = body.scrollHeight;
-    body._sourcesAnimationFrame = requestAnimationFrame(() => {
+    queueFrame(() => {
       body.style.height = `${endHeight}px`;
       body.style.opacity = '1';
       body.style.transform = 'translateY(0)';
     });
   } else {
+    body.classList.add('is-animating');
     const startHeight = body.getBoundingClientRect().height || body.scrollHeight;
     body.style.height = `${startHeight}px`;
     body.style.opacity = '1';
     body.style.transform = 'translateY(0)';
     void body.offsetHeight;
 
-    body._sourcesAnimationFrame = requestAnimationFrame(() => {
+    queueFrame(() => {
       body.style.height = '0px';
       body.style.opacity = '0';
-      body.style.transform = 'translateY(-4px)';
+      body.style.transform = 'translateY(-3px)';
     });
   }
 
@@ -662,16 +661,136 @@ function animateSourcesBody(body, expand) {
     body._sourcesTransitionHandler = null;
     body._sourcesAnimationFrame = null;
     body.style.willChange = '';
+    body.classList.remove('is-animating');
     if (expand) {
       body.style.height = 'auto';
     } else {
       body.hidden = true;
       body.style.height = '0px';
     }
+    if (typeof onComplete === 'function') {
+      onComplete();
+    }
   };
 
   body._sourcesTransitionHandler = onEnd;
   body.addEventListener('transitionend', onEnd);
+}
+
+
+function measureCollapsedDisclosureWidth(panel, summary) {
+  if (!panel || !summary) return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
+
+  const disclosure = panel.querySelector('.message-sources-disclosure');
+  if (!disclosure) {
+    return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
+  }
+
+  const clone = disclosure.cloneNode(false);
+  clone.className = 'message-sources-disclosure';
+  clone.style.position = 'absolute';
+  clone.style.visibility = 'hidden';
+  clone.style.pointerEvents = 'none';
+  clone.style.width = 'auto';
+  clone.style.minWidth = '0';
+  clone.style.maxWidth = 'none';
+  clone.style.borderRadius = '999px';
+  clone.style.transform = 'none';
+  clone.style.transition = 'none';
+
+  const summaryClone = summary.cloneNode(true);
+  summaryClone.style.width = 'auto';
+  summaryClone.style.padding = '';
+  clone.appendChild(summaryClone);
+  panel.appendChild(clone);
+
+  const width = Math.ceil(clone.getBoundingClientRect().width || summaryClone.getBoundingClientRect().width || summary.scrollWidth || 0);
+  clone.remove();
+  return width;
+}
+
+function animateSourcesDisclosureCollapse(panel, summary) {
+  if (!panel || !summary) return;
+  const disclosure = panel.querySelector('.message-sources-disclosure');
+  if (!disclosure) {
+    panel.classList.remove('is-open', 'is-collapsing');
+    return;
+  }
+
+  if (disclosure._widthAnimation) {
+    disclosure._widthAnimation.cancel();
+    disclosure._widthAnimation = null;
+  }
+
+  if (disclosure._widthAnimationFrame) {
+    cancelAnimationFrame(disclosure._widthAnimationFrame);
+    disclosure._widthAnimationFrame = null;
+  }
+
+  const currentWidth = Math.ceil(disclosure.getBoundingClientRect().width);
+  const targetWidth = measureCollapsedDisclosureWidth(panel, summary);
+
+  panel.classList.remove('is-open');
+  panel.classList.add('is-collapsing');
+
+  disclosure.style.width = `${currentWidth}px`;
+  disclosure.style.minWidth = `${currentWidth}px`;
+  disclosure.style.maxWidth = `${currentWidth}px`;
+  void disclosure.offsetWidth;
+
+  const cleanup = () => {
+    if (disclosure._widthAnimation) {
+      try {
+        disclosure._widthAnimation.cancel();
+      } catch (_) {}
+      disclosure._widthAnimation = null;
+    }
+    disclosure._widthAnimationFrame = null;
+    disclosure.style.width = '';
+    disclosure.style.minWidth = '';
+    disclosure.style.maxWidth = '';
+    panel.classList.remove('is-collapsing');
+  };
+
+  if (Math.abs(currentWidth - targetWidth) < 2) {
+    cleanup();
+    return;
+  }
+
+  if (typeof disclosure.animate === 'function') {
+    const animation = disclosure.animate(
+      [
+        { width: `${currentWidth}px`, minWidth: `${currentWidth}px`, maxWidth: `${currentWidth}px` },
+        { width: `${targetWidth}px`, minWidth: `${targetWidth}px`, maxWidth: `${targetWidth}px` },
+      ],
+      {
+        duration: SOURCES_WIDTH_COLLAPSE_MS,
+        delay: 110,
+        easing: 'cubic-bezier(.22,1,.36,1)',
+        fill: 'forwards',
+      }
+    );
+    disclosure._widthAnimation = animation;
+    animation.onfinish = cleanup;
+    animation.oncancel = cleanup;
+    return;
+  }
+
+  disclosure._widthAnimationFrame = requestAnimationFrame(() => {
+    disclosure.style.transition = `width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), min-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), max-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1)`;
+    disclosure.style.width = `${targetWidth}px`;
+    disclosure.style.minWidth = `${targetWidth}px`;
+    disclosure.style.maxWidth = `${targetWidth}px`;
+
+    const onWidthEnd = event => {
+      if (event.propertyName !== 'width') return;
+      disclosure.removeEventListener('transitionend', onWidthEnd);
+      disclosure.style.transition = '';
+      cleanup();
+    };
+
+    disclosure.addEventListener('transitionend', onWidthEnd);
+  });
 }
 
 function setupSourcesPanel(panel) {
@@ -696,9 +815,32 @@ function setupSourcesPanel(panel) {
     summary.addEventListener('click', () => {
       const expand = summary.getAttribute('aria-expanded') !== 'true';
       summary.setAttribute('aria-expanded', expand ? 'true' : 'false');
-      panel.classList.toggle('is-open', expand);
-      animateSourcesBody(body, expand);
-      if (!expand) resetExtraSources();
+
+      if (expand) {
+        panel.classList.remove('is-collapsing');
+        const disclosure = panel.querySelector('.message-sources-disclosure');
+        if (disclosure) {
+          if (disclosure._widthAnimation) {
+            try {
+              disclosure._widthAnimation.cancel();
+            } catch (_) {}
+            disclosure._widthAnimation = null;
+          }
+          if (disclosure._widthAnimationFrame) {
+            cancelAnimationFrame(disclosure._widthAnimationFrame);
+            disclosure._widthAnimationFrame = null;
+          }
+          disclosure.style.width = '';
+          disclosure.style.minWidth = '';
+          disclosure.style.maxWidth = '';
+        }
+        panel.classList.add('is-open');
+        animateSourcesBody(body, true);
+        return;
+      }
+
+      animateSourcesBody(body, false, () => animateSourcesDisclosureCollapse(panel, summary));
+      resetExtraSources();
     });
   }
 
