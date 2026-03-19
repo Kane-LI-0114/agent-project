@@ -49,7 +49,7 @@ class OneAPIConfig(BaseModel):
         return bool(self.api_key and self.base_url)
 
 
-StrictRole = Literal["default", "strict_reviewer", "strict_generator", "strict_auditor"]
+LLMRole = Literal["default", "strict_reviewer", "strict_generator", "strict_auditor", "query_optimizer"]
 
 
 # --------------------------------------------------------------------------- #
@@ -73,7 +73,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def get_azure_config(role: StrictRole = "default") -> AzureOpenAIConfig:
+def get_azure_config(role: LLMRole = "default") -> AzureOpenAIConfig:
     """Return the Azure config for the requested role."""
     base = AzureOpenAIConfig()
     if role == "default":
@@ -93,7 +93,7 @@ def get_azure_config(role: StrictRole = "default") -> AzureOpenAIConfig:
     )
 
 
-def get_oneapi_config(role: StrictRole = "default") -> OneAPIConfig:
+def get_oneapi_config(role: LLMRole = "default") -> OneAPIConfig:
     """Return the OneAPI config for the requested role."""
     base = OneAPIConfig()
     if role == "default":
@@ -221,6 +221,11 @@ def _load_knowledge_pages() -> List[KnowledgePageConfig]:
 
 
 SEARCH_KNOWLEDGE_PAGES: List[KnowledgePageConfig] = _load_knowledge_pages()
+
+QUERY_OPTIMIZER_TIMEOUT_SECONDS: int = _env_int("QUERY_OPTIMIZER_TIMEOUT_SECONDS", 20)
+QUERY_OPTIMIZER_QUERY_COUNT: int = _env_int("QUERY_OPTIMIZER_QUERY_COUNT", 10)
+SEARCH_MAX_MERGED_SOURCES: int = _env_int("SEARCH_MAX_MERGED_SOURCES", 12)
+SEARCH_MAX_SOURCES_PER_QUERY: int = _env_int("SEARCH_MAX_SOURCES_PER_QUERY", 6)
 
 
 # --------------------------------------------------------------------------- #

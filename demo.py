@@ -35,6 +35,7 @@ import sys
 from config.settings import DEMO_PROMPTS
 from core.conversation import ConversationManager
 from core.response_handler import ResponseHandler
+from core.search import SearchService
 from llm import get_llm_client
 
 # Configure basic logging (only show warnings+ for cleaner CLI output)
@@ -71,7 +72,11 @@ async def main() -> None:
         sys.exit(1)
 
     conversation = ConversationManager()
-    handler = ResponseHandler(llm_client, conversation)
+    handler = ResponseHandler(
+        llm_client,
+        conversation,
+        search_service=SearchService(query_optimizer=get_llm_client("query_optimizer")),
+    )
 
     while True:
         try:

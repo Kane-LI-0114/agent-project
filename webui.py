@@ -34,6 +34,7 @@ from config.settings import (
 )
 from core.conversation import ConversationManager
 from core.response_handler import ResponseHandler
+from core.search import SearchService
 from llm import get_llm_client
 
 # --------------------------------------------------------------------------- #
@@ -75,6 +76,7 @@ def get_handler() -> ResponseHandler:
         handler = ResponseHandler(
             llm_client,
             conversation,
+            search_service=SearchService(query_optimizer=get_llm_client("query_optimizer")),
             strict_reviewer=get_llm_client("strict_reviewer"),
             strict_generator=get_llm_client("strict_generator"),
             strict_auditor=get_llm_client("strict_auditor"),

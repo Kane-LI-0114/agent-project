@@ -10,7 +10,7 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 - **Academic Level Adaptation** – Adjusts answer depth based on the user's stated academic background.
 - **Conversation Summary** – Generates summaries of the entire dialog history on request.
 - **Practice Exercise Generation** – Creates targeted practice questions for specified subjects and levels.
-- **Optional Live Search** – Adds free-source retrieval from DuckDuckGo, Wikipedia, OpenAlex, arXiv, PubMed, and configurable knowledge pages for fresher factual answers.
+- **Optional Live Search** – Adds LLM-assisted query optimization plus free-source retrieval from DuckDuckGo, Wikipedia, OpenAlex, arXiv, PubMed, and configurable knowledge pages for fresher factual answers.
 - **Dual API Backends** – Azure OpenAI API (project submission) and One API (OpenAI-compatible, self-testing), switchable via a single config toggle.
 - **CLI Demo Interface** – Built-in demo shortcuts for the 1-minute demo recording.
 
@@ -91,6 +91,14 @@ Optional search-related environment variables:
 ```dotenv
 SEARCH_ENABLED=true
 SEARCH_KNOWLEDGE_PAGES_JSON=[{"name":"Course Notes","url":"https://example.com/notes","keywords":["calculus","limits"]}]
+QUERY_OPTIMIZER_AZURE_DEPLOYMENT_NAME=gpt-4o
+QUERY_OPTIMIZER_ONEAPI_MODEL_NAME=gpt-4o
+QUERY_OPTIMIZER_TEMPERATURE=0.1
+QUERY_OPTIMIZER_MAX_TOKENS=512
+QUERY_OPTIMIZER_TIMEOUT_SECONDS=20
+QUERY_OPTIMIZER_QUERY_COUNT=10
+SEARCH_MAX_MERGED_SOURCES=12
+SEARCH_MAX_SOURCES_PER_QUERY=6
 ```
 
 `SEARCH_KNOWLEDGE_PAGES_JSON` should be a JSON array. Each item needs `name`, `url`, and `keywords`.
@@ -124,7 +132,7 @@ If the LLM backend is not configured yet, the web page can still load, but chat 
 The web UI now includes three search modes above the message box:
 
 - `Auto Search` – only searches when the query likely needs fresh facts or sources
-- `Search On` – always retrieves web, academic, and matching knowledge-page sources
+- `Search On` – always runs LLM query optimization first, then retrieves web, academic, and matching knowledge-page sources
 - `Search Off` – keeps responses local to the model and conversation history only
 
 ## Demo Shortcuts

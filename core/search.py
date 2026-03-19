@@ -25,11 +25,19 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from xml.etree import ElementTree
-from typing import Iterable, List, Literal, cast
+from typing import Any, Iterable, List, Literal, cast
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from config.settings import SEARCH_ENABLED, SEARCH_KNOWLEDGE_PAGES
+from config.settings import (
+    QUERY_OPTIMIZER_QUERY_COUNT,
+    QUERY_OPTIMIZER_TIMEOUT_SECONDS,
+    SEARCH_ENABLED,
+    SEARCH_KNOWLEDGE_PAGES,
+    SEARCH_MAX_MERGED_SOURCES,
+    SEARCH_MAX_SOURCES_PER_QUERY,
+)
+from llm.base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +50,6 @@ _REQUEST_HEADERS = {
         "Chrome/122.0.0.0 Safari/537.36 SmartTutor/1.0"
     )
 }
-_MAX_SOURCE_COUNT = 6
 _MAX_SNIPPET_CHARS = 500
 _ACADEMIC_KEYWORDS = (
     "paper",
@@ -75,6 +82,20 @@ _ACADEMIC_KEYWORDS = (
     "economics",
     "philosophy",
 )
+_QUERY_OPTIMIZER_PROMPT = """You optimize web-search queries for a homework tutoring assistant.
+Return JSON only.
+
+Task:
+- Read the user's original query.
+- Produce exactly {count} search queries.
+- Preserve the user's intent. Do not answer the question.
+- Generate diverse but relevant variants using synonyms, standard terminology, scope refinements, and useful context terms.
+- For academic/research questions, include variants suitable for scholarly databases such as OpenAlex, arXiv, and PubMed.
+- Avoid unrelated, overly broad, overly narrow, speculative, or answer-like queries.
+
+Output format:
+{{"queries": ["query 1", "query 2", ...]}}
+""".strip()
 
 
 @dataclass
@@ -100,7 +121,8 @@ class SearchSource:
 class SearchResult:
     """Bundled result of a search execution."""
 
-    query: str
+    original_query: str
+    optimized_queries: List[str]
     sources: List[SearchSource]
 
     def to_system_message(self) -> str:
@@ -111,10 +133,13 @@ class SearchResult:
             "Prefer the search evidence over stale world knowledge for factual details.",
             "Do not add a separate Sources section to the final answer.",
             "",
-            f"Search query: {self.query}",
+            f"Original query: {self.original_query}",
             "",
-            "Retrieved sources:",
+            "Optimized search queries:",
         ]
+        for index, query in enumerate(self.optimized_queries, start=1):
+            lines.append(f"[{index}] {query}")
+        lines.extend(["", "Retrieved sources:"])
         for index, source in enumerate(self.sources, start=1):
             lines.append(f"[{index}] {source.title} ({source.provider})")
             lines.append(f"URL: {source.url}")
@@ -177,7 +202,10 @@ class _ParagraphExtractor(HTMLParser):
 
 
 class SearchService:
-    """Runs optional web search for a single user query."""
+    """Runs optional live search, with optional LLM-driven query expansion."""
+
+    def __init__(self, query_optimizer: BaseLLMClient | None = None) -> None:
+        self._query_optimizer = query_optimizer
 
     def should_execute(self, query: str, mode: SearchMode) -> bool:
         """Return whether a query should trigger live search."""
@@ -244,7 +272,8 @@ class SearchService:
         """Return search evidence when the mode requires it."""
         if not self.should_execute(query, mode):
             return None
-        return await self.search(query)
+        optimized_queries = await self.expand_queries(query)
+        return await self.search_many(query, optimized_queries)
 
     def should_search(self, query: str) -> bool:
         """Heuristic for deciding whether a question benefits from live search."""
@@ -301,8 +330,59 @@ class SearchService:
         lower = query.lower()
         return any(keyword in lower for keyword in _ACADEMIC_KEYWORDS)
 
+    async def expand_queries(self, query: str) -> List[str]:
+        """Return a fixed-size list of optimized search queries."""
+        baseline = self._finalize_queries([], query)
+        if self._query_optimizer is None:
+            return baseline
+
+        messages = [
+            {
+                "role": "system",
+                "content": _QUERY_OPTIMIZER_PROMPT.format(count=QUERY_OPTIMIZER_QUERY_COUNT),
+            },
+            {"role": "user", "content": query},
+        ]
+        try:
+            raw = await asyncio.wait_for(
+                self._query_optimizer.chat(messages),
+                timeout=QUERY_OPTIMIZER_TIMEOUT_SECONDS,
+            )
+            parsed = self._parse_optimizer_queries(raw)
+            if not parsed:
+                raise ValueError("Query optimizer returned no usable queries.")
+            return self._finalize_queries(parsed, query)
+        except (asyncio.TimeoutError, RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("Query optimizer failed for %r: %s", query, exc)
+            return baseline
+
     async def search(self, query: str) -> SearchResult | None:
-        """Collect best-effort search evidence from multiple free sources."""
+        """Collect best-effort search evidence for a single query."""
+        return await self.search_many(query, [query])
+
+    async def search_many(self, original_query: str, queries: List[str]) -> SearchResult | None:
+        """Collect best-effort search evidence from multiple optimized queries."""
+        finalized_queries = self._finalize_queries(queries, original_query)
+        tasks = [self._search_single_query(query) for query in finalized_queries]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        merged: List[SearchSource] = []
+        for query, result in zip(finalized_queries, results):
+            if isinstance(result, BaseException):
+                logger.warning("Search source failed for query %r: %s", query, result)
+                continue
+            merged.extend(result)
+
+        deduped = self._dedupe_sources(merged)[:SEARCH_MAX_MERGED_SOURCES]
+        if not deduped:
+            return None
+        return SearchResult(
+            original_query=original_query,
+            optimized_queries=finalized_queries,
+            sources=deduped,
+        )
+
+    async def _search_single_query(self, query: str) -> List[SearchSource]:
         tasks = [
             asyncio.to_thread(self._duckduckgo_instant_answer, query),
             asyncio.to_thread(self._wikipedia_search, query),
@@ -324,14 +404,118 @@ class SearchService:
         merged: List[SearchSource] = []
         for result in results:
             if isinstance(result, BaseException):
-                logger.warning("Search source failed for query %r: %s", query, result)
+                logger.warning("Search provider failed for query %r: %s", query, result)
                 continue
             merged.extend(result)
+        return merged[:SEARCH_MAX_SOURCES_PER_QUERY]
 
-        deduped = self._dedupe_sources(merged)[:_MAX_SOURCE_COUNT]
-        if not deduped:
+    def _parse_optimizer_queries(self, raw: str) -> List[str]:
+        text = (raw or "").strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = self._extract_json_payload(text)
+        return self._normalize_queries_payload(parsed)
+
+    def _extract_json_payload(self, text: str) -> Any:
+        if "```" in text:
+            for chunk in text.split("```"):
+                candidate = chunk.replace("json", "", 1).strip()
+                if candidate.startswith("{") or candidate.startswith("["):
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        pass
+        object_match = self._extract_balanced_json(text, "{", "}")
+        if object_match is not None:
+            return json.loads(object_match)
+        array_match = self._extract_balanced_json(text, "[", "]")
+        if array_match is not None:
+            return json.loads(array_match)
+        raise json.JSONDecodeError("No JSON found", text, 0)
+
+    def _extract_balanced_json(self, text: str, opening: str, closing: str) -> str | None:
+        start = text.find(opening)
+        if start == -1:
             return None
-        return SearchResult(query=query, sources=deduped)
+        depth = 0
+        for index in range(start, len(text)):
+            char = text[index]
+            if char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+        return None
+
+    def _normalize_queries_payload(self, payload: Any) -> List[str]:
+        items: Any = payload
+        if isinstance(payload, dict):
+            for key in ("queries", "search_queries", "items"):
+                if isinstance(payload.get(key), list):
+                    items = payload[key]
+                    break
+        if not isinstance(items, list):
+            return []
+        queries: List[str] = []
+        for item in items:
+            if isinstance(item, str):
+                cleaned = self._clean_query(item)
+            elif isinstance(item, dict):
+                cleaned = self._clean_query(str(item.get("query") or item.get("text") or ""))
+            else:
+                cleaned = ""
+            if cleaned:
+                queries.append(cleaned)
+        return queries
+
+    def _finalize_queries(self, queries: List[str], original_query: str) -> List[str]:
+        finalized: List[str] = []
+        seen = set()
+        base = self._clean_query(original_query)
+        seeds = [*queries, base]
+        for query in seeds:
+            cleaned = self._clean_query(query)
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            finalized.append(cleaned)
+
+        fallback_variants = [
+            base,
+            f"{base} overview",
+            f"{base} explanation",
+            f"{base} examples",
+            f"{base} definition",
+            f"{base} background",
+            f"{base} summary",
+            f"{base} academic source",
+            f"{base} reference",
+            f"{base} key facts",
+            f"{base} detailed explanation",
+            f"{base} study guide",
+        ]
+        for variant in fallback_variants:
+            if len(finalized) >= QUERY_OPTIMIZER_QUERY_COUNT:
+                break
+            key = variant.lower()
+            if variant and key not in seen:
+                seen.add(key)
+                finalized.append(variant)
+
+        return finalized[:QUERY_OPTIMIZER_QUERY_COUNT]
+
+    def _clean_query(self, query: str) -> str:
+        cleaned = self._clean_text(query)
+        cleaned = re.sub(r"^[\-\*\d\.)\s]+", "", cleaned)
+        cleaned = cleaned.strip("'\" ")
+        return cleaned
 
     def _duckduckgo_instant_answer(self, query: str) -> List[SearchSource]:
         params = urlencode(
@@ -630,7 +814,9 @@ class SearchService:
         seen = set()
         deduped: List[SearchSource] = []
         for source in sources:
-            key = (source.url.strip().lower(), source.title.strip().lower())
+            url_key = source.url.strip().lower()
+            fallback_key = (source.title.strip().lower(), source.provider.strip().lower())
+            key = url_key or fallback_key
             if not source.snippet or key in seen:
                 continue
             seen.add(key)

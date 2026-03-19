@@ -5,11 +5,11 @@ Factory functions that return the appropriate LLM client based on the
 configured backend (``LLM_BACKEND`` environment variable).
 """
 
-from config.settings import LLM_BACKEND, StrictRole, get_azure_config, get_oneapi_config
+from config.settings import LLM_BACKEND, LLMRole, get_azure_config, get_oneapi_config
 from llm.base_client import BaseLLMClient
 
 
-def get_llm_client(role: StrictRole = "default") -> BaseLLMClient:
+def get_llm_client(role: LLMRole = "default") -> BaseLLMClient:
     """
     Instantiate and return the LLM client selected by the ``LLM_BACKEND``
     environment variable.
