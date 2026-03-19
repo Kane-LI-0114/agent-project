@@ -10,9 +10,9 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 - **Academic Level Adaptation** – Adjusts answer depth based on the user's stated academic background.
 - **Conversation Summary** – Generates summaries of the entire dialog history on request.
 - **Practice Exercise Generation** – Creates targeted practice questions for specified subjects and levels.
-- **Optional Live Search** – Adds LLM-assisted query optimization plus free-source retrieval from DuckDuckGo, Wikipedia, OpenAlex, arXiv, PubMed, and configurable knowledge pages for fresher factual answers.
+- **Optional Live Search** – Adds LLM-assisted query optimization plus free-source retrieval from DuckDuckGo, Wikipedia, OpenAlex, arXiv, PubMed, and configurable knowledge pages for fresher factual answers when automatic search is enabled.
 - **Dual API Backends** – Azure OpenAI API (project submission) and One API (OpenAI-compatible, self-testing), switchable via a single config toggle.
-- **CLI Demo Interface** – Built-in demo shortcuts for the 1-minute demo recording.
+- **CLI Demo Interface** – Built-in demo shortcuts plus runtime controls for strict mode and search mode.
 
 ## Project Structure
 
@@ -39,7 +39,6 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 ├── start.sh                  # Convenience launcher for the web UI
 ├── templates/
 │   └── index.html            # Frontend chat interface
-├── single_file_demo.py       # Single-file combined version for quick demo
 └── agent-home-work-azure.py  # Original reference implementation
 ```
 
@@ -115,11 +114,6 @@ python demo.py
 python webui.py
 ```
 
-**Single-file version** (for quick demos):
-```bash
-python single_file_demo.py
-```
-
 You can also start the web UI with:
 ```bash
 ./start.sh
@@ -127,13 +121,27 @@ You can also start the web UI with:
 
 If the LLM backend is not configured yet, the web page can still load, but chat requests will return a clear configuration error until `.env` is completed.
 
-## Web Search Modes
+`single_file_demo.py` has been removed because it duplicated the modular implementation and was no longer maintained alongside the main entry points.
 
-The web UI now includes three search modes above the message box:
+## Demo / Web UI Alignment
 
-- `Auto Search` – only searches when the query likely needs fresh facts or sources
-- `Search On` – always runs LLM query optimization first, then retrieves web, academic, and matching knowledge-page sources
-- `Search Off` – keeps responses local to the model and conversation history only
+Both [demo.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/demo.py) and [webui.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/webui.py) support the same core controls:
+
+- `Normal Mode` and `Strict Mode`
+- `Auto Search`, `Search On`, and `Search Off`
+- the same demo prompt set
+- conversation clearing / reset
+
+In the CLI, use:
+
+```bash
+mode normal
+mode strict
+search auto
+search on
+search off
+status
+```
 
 ## Demo Shortcuts
 
@@ -149,6 +157,12 @@ Type any of these keywords at the prompt to trigger built-in test cases:
 | `demo-summary`  | Conversation summary: *Can you summarise our conversation so far?*         |
 | `demo-level`    | Academic level: *I'm a university year one student...*                     |
 | `demo-exercise` | Practice exercises: *I want to practice calculus for my final in math101...* |
+| `mode normal`   | Switch CLI to the normal response pipeline                                 |
+| `mode strict`   | Switch CLI to the strict reviewed pipeline                                 |
+| `search auto`   | Enable automatic search                                                    |
+| `search on`     | Force search for every request                                             |
+| `search off`    | Disable search                                                             |
+| `status`        | Show current CLI mode/search settings                                      |
 | `clear`         | Clear conversation history and start fresh                                 |
 | `exit` / `quit` | Exit the program                                                           |
 

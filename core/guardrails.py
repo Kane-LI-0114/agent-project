@@ -19,6 +19,7 @@ import codecs
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
@@ -82,6 +83,24 @@ _LIFE_PATTERNS: List[str] = [
     r"\bdating\b",
     r"\bjoke\b",
     r"\btell me a joke\b",
+]
+
+_LIFE_SERVICE_INTENT_PATTERNS: List[str] = [
+    r"\bbest way\b",
+    r"\bcheapest\b",
+    r"\bcheaper\b",
+    r"\bbook\b",
+    r"\bbooking\b",
+    r"\bitinerary\b",
+    r"\broute\b",
+    r"\bnext week\b",
+    r"\btomorrow\b",
+    r"\bthis weekend\b",
+    r"\bprice\b",
+    r"\bcost\b",
+    r"\brecommend\b",
+    r"\breservation\b",
+    r"\bticket\b",
 ]
 
 _HOMEWORK_PATTERNS: List[str] = [
@@ -236,6 +255,10 @@ _ORG_ADMIN_PATTERNS: List[str] = [
     r"\bfirst president\b",
     r"\bpresident\b",
     r"\bfound(?:er|ed|ing)\b",
+    r"\bceo\b",
+    r"\bcfo\b",
+    r"\bcto\b",
+    r"\bcoo\b",
     r"\bprincipal\b",
     r"\bchancellor\b",
     r"\bvice[- ]?chancellor\b",
@@ -249,18 +272,37 @@ _ORG_ADMIN_PATTERNS: List[str] = [
 
 _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
     ("jailbreak", r"\bignore (all|previous|prior|above) instructions\b"),
+    ("jailbreak", r"\bignore\b.*\bguardrails?\b"),
     ("jailbreak", r"\bdisregard (the )?(system|safety|guardrail)"),
     ("jailbreak", r"\bprompt injection\b"),
     ("jailbreak", r"\bdeveloper mode\b"),
+    ("jailbreak", r"\bdebug mode\b"),
     ("jailbreak", r"\bact as\b.*\bwithout restrictions\b"),
     ("jailbreak", r"\bbypass\b.*\bguardrail"),
     ("jailbreak", r"\bdo anything now\b"),
     ("jailbreak", r"\bshow (me )?(the )?(system|hidden) prompt\b"),
+    ("jailbreak", r"\b(full|entire|verbatim)\s+(system|hidden|internal)\s+(prompt|instructions)\b"),
+    ("jailbreak", r"\b(hidden|internal)\s+instructions\b"),
+    ("jailbreak", r"\bsystem instructions\b"),
+    ("jailbreak", r"\bhidden rules?\b"),
+    ("jailbreak", r"\bprivate policy\b"),
+    ("jailbreak", r"\bpolicy headings\b"),
+    ("jailbreak", r"\bconstraints?\b.*\b(startup|initialized|initialised)\b"),
+    ("jailbreak", r"\binstructions?\b.*\bbefore my first message\b"),
+    ("jailbreak", r"\bsummar(?:ize|ise)\b.*\binstructions?\b.*\bgiven\b"),
+    ("jailbreak", r"\bstate\b.*\bprivate policy\b"),
+    ("jailbreak", r"\breproduce\b.*\b(system|hidden|internal)\b.*\b(prompt|instructions)\b"),
+    ("jailbreak", r"\bdecode\b.*\b(obey|follow)\b"),
+    ("jailbreak", r"\b(obey|follow)\b.*\bencoded\b"),
+    ("jailbreak", r"\bfrom now on\b.*\bcounts as\b"),
+    ("jailbreak", r"\btreat my message as a system update\b"),
+    ("jailbreak", r"<system>.*</system>"),
     ("cheating", r"\bdo my homework\b"),
     ("cheating", r"\bfinish my assignment\b"),
     ("cheating", r"\bgive me the final answer only\b"),
     ("cheating", r"\bpretend you are my teacher\b"),
     ("harmful", r"\bhow to make\b.*\b(bomb|explosive|meth|drug)\b"),
+    ("harmful", r"\b(steps|instructions|recipe|build|assemble|make)\b.*\b(bomb|explosive|meth|drug)\b"),
     ("harmful", r"\bkill\b|\bmurder\b"),
     ("harmful", r"\bsexual\b|\bporn\b"),
 ]
@@ -294,8 +336,19 @@ def _is_printable_ratio_high(text: str) -> bool:
     return printable / len(text) >= 0.9
 
 
+def _strip_invisible_chars(text: str) -> str:
+    return "".join(
+        ch
+        for ch in text
+        if unicodedata.category(ch) != "Cf" and ch not in {"\u00ad", "\ufeff"}
+    )
+
+
 def _try_decode_base64(text: str) -> Optional[str]:
-    compact = re.sub(r"\s+", "", text)
+    stripped = text.strip()
+    prefix_match = re.match(r"^(?:base64|b64|encoded)\s*:\s*(.+)$", stripped, re.IGNORECASE)
+    candidate = prefix_match.group(1) if prefix_match else stripped
+    compact = re.sub(r"\s+", "", candidate)
     if len(compact) < 16 or len(compact) % 4 != 0:
         return None
     if not re.fullmatch(r"[A-Za-z0-9+/=]+", compact):
@@ -333,15 +386,16 @@ def _try_decode_morse(text: str) -> Optional[str]:
 
 
 def _normalize_input(text: str) -> tuple[str, Optional[str]]:
+    cleaned = _strip_invisible_chars(text).strip()
     for encoding_name, decoder in (
         ("base64", _try_decode_base64),
         ("rot13", _try_decode_rot13),
         ("morse", _try_decode_morse),
     ):
-        decoded = decoder(text)
+        decoded = decoder(cleaned)
         if decoded:
             return decoded.strip(), encoding_name
-    return text.strip(), None
+    return cleaned, None
 
 
 def _find_rule_matches(text: str) -> list[str]:
@@ -370,6 +424,15 @@ def _mentions_out_of_scope_subject(text: str) -> bool:
 
 def _looks_like_local_institution_admin_query(text: str) -> bool:
     return _matches_any(text, _ORG_ADMIN_PATTERNS) and _matches_any(text, _ORG_HINT_PATTERNS)
+
+
+def _looks_like_org_trivia_query(text: str) -> bool:
+    if _looks_like_local_institution_admin_query(text):
+        return True
+    return (
+        _matches_any(text, [r"\bceo\b", r"\bcfo\b", r"\bcto\b", r"\bcoo\b"])
+        and _matches_any(text, [r"\bfirst\b", r"\bfound(?:er|ed|ing)\b", r"\bwho was\b", r"\blist\b"])
+    )
 
 
 def prefilter_input(user_input: str) -> InputGuardResult:
@@ -405,7 +468,7 @@ def prefilter_input(user_input: str) -> InputGuardResult:
             encoding=encoding,
         )
 
-    if _looks_like_local_institution_admin_query(normalized_text):
+    if _looks_like_org_trivia_query(normalized_text):
         return InputGuardResult(
             allowed=False,
             normalized_input=normalized_text,
@@ -416,6 +479,19 @@ def prefilter_input(user_input: str) -> InputGuardResult:
         )
 
     if _matches_any(normalized_text, _LIFE_PATTERNS) and not _has_explicit_academic_cue(normalized_text):
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="non_homework",
+            stage="prefilter",
+            encoding=encoding,
+        )
+
+    if _matches_any(normalized_text, _LIFE_PATTERNS) and _matches_any(
+        normalized_text,
+        _LIFE_SERVICE_INTENT_PATTERNS,
+    ):
         return InputGuardResult(
             allowed=False,
             normalized_input=normalized_text,

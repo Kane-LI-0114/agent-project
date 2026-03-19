@@ -21,9 +21,10 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+from typing import Literal
+
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from typing import Literal
 from pydantic import BaseModel
 
 from config.settings import (
