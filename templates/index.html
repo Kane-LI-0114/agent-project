@@ -5,12 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SmartTutor - CSIT5900</title>
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <link rel="stylesheet" href="/static/index.css">
 </head>
 <body>
 
 <div class="app-shell">
+  <div class="app-shell-grid" aria-hidden="true"></div>
+  <div class="app-shell-glow app-shell-glow-a" aria-hidden="true"></div>
+  <div class="app-shell-glow app-shell-glow-b" aria-hidden="true"></div>
   <div class="app">
     <div class="header">
       <div class="header-inner">
@@ -28,8 +34,9 @@
       <div class="chat-inner">
         <div class="welcome" id="welcomeScreen">
           <div class="welcome-badge">SmartTutor for CSIT5900</div>
-          <h2>What can I help with for your coursework today?</h2>
-          <p>Use normal mode for fast streaming replies, or strict mode for a three-step review flow with visible safety cards before the final answer.</p>
+          <div class="welcome-panel">
+            <h2>What can I help with for your coursework today?</h2>
+          </div>
           <div class="demo-grid" id="demoGrid"></div>
         </div>
         <div class="messages" id="messageList"></div>
@@ -64,7 +71,7 @@
               </div>
             </div>
           </div>
-          <div class="search-status" id="searchStatus">Normal streams. Strict reviews first.</div>
+          <div class="search-status" id="searchStatus">Normal replies stream fast. Strict mode reviews first.</div>
         </div>
         <div class="input-bar">
           <textarea id="userInput" rows="1" placeholder="Message SmartTutor..." onkeydown="handleKey(event)"></textarea>
@@ -75,7 +82,7 @@
             </svg>
           </button>
         </div>
-        <div class="composer-footer">Enter to send, Shift+Enter for a new line</div>
+        <div class="composer-footer">Press Enter to send · Shift+Enter for a new line</div>
       </div>
     </div>
   </div>
@@ -96,6 +103,11 @@ const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
 const BOTTOM_STICKY_THRESHOLD = 120;
 const PANEL_TRANSITION_MS = 320;
+const SOURCES_PANEL_TRANSITION_MS = 420;
+const SOURCES_WIDTH_COLLAPSE_MS = 380;
+let sourcesDisclosureId = 0;
+const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
+const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
 let searchMode = SEARCH_ENABLED ? 'auto' : 'off';
 let chatMode = STRICT_MODE_ENABLED ? 'normal' : 'normal';
 
@@ -196,11 +208,21 @@ function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
+function getSourceHostname(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace(/^www\./, '');
+  } catch (_) {
+    return '';
+  }
+}
+
 function setChatMode(mode) {
   chatMode = mode === 'strict' && STRICT_MODE_ENABLED ? 'strict' : 'normal';
   const descriptions = {
-    normal: 'Normal streams.',
-    strict: 'Strict reviews first.',
+    normal: 'Normal replies stream fast.',
+    strict: 'Strict mode reviews first.',
   };
   const labels = {
     normal: 'Normal Mode',
@@ -217,13 +239,13 @@ function setChatMode(mode) {
 function setSearchMode(mode) {
   searchMode = mode;
   const searchDescriptions = {
-    auto: 'Auto search when needed.',
-    on: 'Search every time.',
-    off: 'No web search.',
+    auto: 'Search only when the answer needs grounding.',
+    on: 'Search on every request.',
+    off: 'Web search stays off.',
   };
   const modeDescriptions = {
-    normal: 'Normal streams.',
-    strict: 'Strict reviews first.',
+    normal: 'Normal replies stream fast.',
+    strict: 'Strict mode reviews first.',
   };
   const labels = {
     auto: 'Auto Search',
@@ -302,17 +324,12 @@ function appendMessage(role, text) {
 }
 
 function createStreamingMessage() {
-  const row = document.createElement('div');
-  row.className = 'msg-row bot';
+  const searchRow = document.createElement('div');
+  searchRow.className = 'msg-row bot search-status-row';
+  searchRow.setAttribute('aria-hidden', 'true');
 
-  const card = document.createElement('div');
-  card.className = 'msg-card';
-
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-bubble streaming';
-
-  const shell = document.createElement('div');
-  shell.className = 'streaming-shell';
+  const searchCard = document.createElement('div');
+  searchCard.className = 'search-status-card';
 
   const pendingPanel = document.createElement('div');
   pendingPanel.className = 'search-pending';
@@ -320,33 +337,77 @@ function createStreamingMessage() {
 
   const pendingLabel = document.createElement('div');
   pendingLabel.className = 'search-pending-label';
-  pendingLabel.textContent = 'Searching on Web...';
+  pendingLabel.textContent = 'Searching web';
 
   pendingPanel.appendChild(pendingLabel);
+  searchCard.appendChild(pendingPanel);
+  searchRow.appendChild(searchCard);
+  messageList.appendChild(searchRow);
+
+  const row = document.createElement('div');
+  row.className = 'msg-row bot';
+
+  const card = document.createElement('div');
+  card.className = 'msg-card';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble streaming is-pending';
+
+  const shell = document.createElement('div');
+  shell.className = 'streaming-shell';
+
+  const inlinePending = document.createElement('div');
+  inlinePending.className = 'inline-pending is-visible';
+
+  const inlinePendingHeader = document.createElement('div');
+  inlinePendingHeader.className = 'inline-pending-header';
+
+  const inlinePendingDot = document.createElement('span');
+  inlinePendingDot.className = 'inline-pending-dot';
+  inlinePendingDot.setAttribute('aria-hidden', 'true');
+
+  const inlinePendingTitle = document.createElement('span');
+  inlinePendingTitle.className = 'inline-pending-title';
+  inlinePendingTitle.textContent = 'Thinking';
+
+  inlinePendingHeader.appendChild(inlinePendingDot);
+  inlinePendingHeader.appendChild(inlinePendingTitle);
+  inlinePending.appendChild(inlinePendingHeader);
+
+  for (let i = 0; i < 3; i += 1) {
+    const line = document.createElement('span');
+    line.className = `inline-pending-line line-${i + 1}`;
+    inlinePending.appendChild(line);
+  }
 
   const content = document.createElement('div');
-  content.className = 'streaming-content is-plain';
+  content.className = 'streaming-content is-plain is-hidden';
 
   const sourcesPanel = document.createElement('div');
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
 
-  bubble.appendChild(pendingPanel);
+  shell.appendChild(inlinePending);
   shell.appendChild(content);
   bubble.appendChild(shell);
-  bubble.appendChild(sourcesPanel);
 
   card.appendChild(bubble);
+  card.appendChild(sourcesPanel);
   row.appendChild(card);
   messageList.appendChild(row);
   scrollToBottom(true);
 
   return {
+    searchRow,
+    searchCard,
     row,
     bubble,
     shell,
     content,
+    inlinePending,
+    inlinePendingTitle,
     pendingPanel,
+    pendingLabel,
     sourcesPanel,
     rawText: '',
     displayLength: 0,
@@ -356,6 +417,11 @@ function createStreamingMessage() {
     searchPending: false,
     searchSources: [],
     pendingHideTimer: null,
+    queryRotationTimer: null,
+    queryRotationInterval: null,
+    queryRotationIndex: 0,
+    searchQueries: [],
+    hasVisibleContent: false,
   };
 }
 
@@ -376,7 +442,7 @@ function createStrictMessage() {
   strictHeader.className = 'strict-header';
   strictHeader.innerHTML = `
     <span class="strict-badge">Strict Mode</span>
-    <span class="strict-caption">Three-stage review pipeline</span>
+    <span class="strict-caption">Three-stage review pipeline with visible checkpoints</span>
   `;
 
   const cards = document.createElement('div');
@@ -398,17 +464,17 @@ function createStrictMessage() {
 
   finalAnswer.appendChild(finalLabel);
   finalAnswer.appendChild(finalContent);
-  finalAnswer.appendChild(sourcesPanel);
   strictWrap.appendChild(strictHeader);
   strictWrap.appendChild(cards);
   strictWrap.appendChild(finalAnswer);
+  strictWrap.appendChild(sourcesPanel);
   bubble.appendChild(strictWrap);
   card.appendChild(bubble);
   row.appendChild(card);
   messageList.appendChild(row);
 
   const trace = [
-    { key: 'input_review', title: 'Input Review', status: 'pending', summary: 'Waiting to inspect the user request.', decision: 'pending' },
+    { key: 'input_review', title: 'Input Review', status: 'active', summary: 'Inspecting the user request and preparing the strict pipeline.', decision: 'running' },
     { key: 'answer_generation', title: 'Answer Generation', status: 'pending', summary: 'Waiting to generate a course-safe draft.', decision: 'pending' },
     { key: 'final_audit', title: 'Final Audit', status: 'pending', summary: 'Waiting to approve the draft answer.', decision: 'pending' },
   ];
@@ -423,19 +489,27 @@ function createStrictMessage() {
 }
 
 function renderStrictTrace(container, trace) {
-  container.innerHTML = (trace || []).map(stage => `
-    <article class="strict-stage status-${escapeHtml(stage.status || 'pending')}">
-      <div class="strict-stage-top">
-        <h3>${escapeHtml(stage.title || 'Stage')}</h3>
-        <span class="strict-stage-pill">${escapeHtml(stage.status || 'pending')}</span>
-      </div>
-      <p>${escapeHtml(stage.summary || '')}</p>
-      <div class="strict-stage-meta">
-        <span>Decision: ${escapeHtml(stage.decision || 'pending')}</span>
-        <span>${escapeHtml(formatStrictStageTiming(stage))}</span>
-      </div>
-    </article>
-  `).join('');
+  container.innerHTML = (trace || []).map(stage => {
+    const status = escapeHtml(stage.status || 'pending');
+    const showSpinner = (stage.status || 'pending') === 'active';
+    return `
+      <article class="strict-stage status-${status}">
+        <div class="strict-stage-accent" aria-hidden="true"></div>
+        <div class="strict-stage-top">
+          <div class="strict-stage-heading">
+            <span class="strict-stage-kicker">${escapeHtml((stage.key || 'stage').replace(/_/g, ' '))}</span>
+            <h3>${escapeHtml(stage.title || 'Stage')}</h3>
+          </div>
+          <span class="strict-stage-pill">${showSpinner ? '<span class="strict-stage-spinner" aria-hidden="true"></span>' : ''}${status}</span>
+        </div>
+        <p>${escapeHtml(stage.summary || '')}</p>
+        <div class="strict-stage-meta">
+          <span>Decision: ${escapeHtml(stage.decision || 'pending')}</span>
+          <span>${escapeHtml(formatStrictStageTiming(stage))}</span>
+        </div>
+      </article>
+    `;
+  }).join('');
 }
 
 function formatStrictStageTiming(stage) {
@@ -528,32 +602,324 @@ function renderFinalAnswer(container, text) {
   }
 }
 
+function animateSourcesBody(body, expand, onComplete) {
+  if (!body) return;
+
+  if (body._sourcesAnimationFrame) {
+    cancelAnimationFrame(body._sourcesAnimationFrame);
+    body._sourcesAnimationFrame = null;
+  }
+
+  if (body._sourcesTransitionHandler) {
+    body.removeEventListener('transitionend', body._sourcesTransitionHandler);
+    body._sourcesTransitionHandler = null;
+  }
+
+  body.style.overflow = 'hidden';
+  body.style.willChange = 'height, opacity, transform';
+  body.style.setProperty('--sources-body-duration', `${SOURCES_PANEL_TRANSITION_MS}ms`);
+  body.hidden = false;
+
+  const queueFrame = callback => {
+    body._sourcesAnimationFrame = requestAnimationFrame(() => {
+      body._sourcesAnimationFrame = requestAnimationFrame(callback);
+    });
+  };
+
+  if (expand) {
+    body.classList.add('is-animating');
+    const startHeight = body.hidden ? 0 : body.getBoundingClientRect().height;
+    body.style.height = `${startHeight}px`;
+    body.style.opacity = startHeight > 0 ? '1' : '0';
+    body.style.transform = startHeight > 0 ? 'translateY(0)' : 'translateY(-4px)';
+    void body.offsetHeight;
+
+    const endHeight = body.scrollHeight;
+    queueFrame(() => {
+      body.style.height = `${endHeight}px`;
+      body.style.opacity = '1';
+      body.style.transform = 'translateY(0)';
+    });
+  } else {
+    body.classList.add('is-animating');
+    const startHeight = body.getBoundingClientRect().height || body.scrollHeight;
+    body.style.height = `${startHeight}px`;
+    body.style.opacity = '1';
+    body.style.transform = 'translateY(0)';
+    void body.offsetHeight;
+
+    queueFrame(() => {
+      body.style.height = '0px';
+      body.style.opacity = '0';
+      body.style.transform = 'translateY(-3px)';
+    });
+  }
+
+  const onEnd = event => {
+    if (event.propertyName !== 'height') return;
+    body.removeEventListener('transitionend', onEnd);
+    body._sourcesTransitionHandler = null;
+    body._sourcesAnimationFrame = null;
+    body.style.willChange = '';
+    body.classList.remove('is-animating');
+    if (expand) {
+      body.style.height = 'auto';
+    } else {
+      body.hidden = true;
+      body.style.height = '0px';
+    }
+    if (typeof onComplete === 'function') {
+      onComplete();
+    }
+  };
+
+  body._sourcesTransitionHandler = onEnd;
+  body.addEventListener('transitionend', onEnd);
+}
+
+
+function measureCollapsedDisclosureWidth(panel, summary) {
+  if (!panel || !summary) return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
+
+  const disclosure = panel.querySelector('.message-sources-disclosure');
+  if (!disclosure) {
+    return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
+  }
+
+  const clone = disclosure.cloneNode(false);
+  clone.className = 'message-sources-disclosure';
+  clone.style.position = 'absolute';
+  clone.style.visibility = 'hidden';
+  clone.style.pointerEvents = 'none';
+  clone.style.width = 'auto';
+  clone.style.minWidth = '0';
+  clone.style.maxWidth = 'none';
+  clone.style.borderRadius = '999px';
+  clone.style.transform = 'none';
+  clone.style.transition = 'none';
+
+  const summaryClone = summary.cloneNode(true);
+  summaryClone.style.width = 'auto';
+  summaryClone.style.padding = '';
+  clone.appendChild(summaryClone);
+  panel.appendChild(clone);
+
+  const width = Math.ceil(clone.getBoundingClientRect().width || summaryClone.getBoundingClientRect().width || summary.scrollWidth || 0);
+  clone.remove();
+  return width;
+}
+
+function animateSourcesDisclosureCollapse(panel, summary) {
+  if (!panel || !summary) return;
+  const disclosure = panel.querySelector('.message-sources-disclosure');
+  if (!disclosure) {
+    panel.classList.remove('is-open', 'is-collapsing');
+    return;
+  }
+
+  if (disclosure._widthAnimation) {
+    disclosure._widthAnimation.cancel();
+    disclosure._widthAnimation = null;
+  }
+
+  if (disclosure._widthAnimationFrame) {
+    cancelAnimationFrame(disclosure._widthAnimationFrame);
+    disclosure._widthAnimationFrame = null;
+  }
+
+  const currentWidth = Math.ceil(disclosure.getBoundingClientRect().width);
+  const targetWidth = measureCollapsedDisclosureWidth(panel, summary);
+
+  panel.classList.remove('is-open');
+  panel.classList.add('is-collapsing');
+
+  disclosure.style.width = `${currentWidth}px`;
+  disclosure.style.minWidth = `${currentWidth}px`;
+  disclosure.style.maxWidth = `${currentWidth}px`;
+  void disclosure.offsetWidth;
+
+  const cleanup = () => {
+    if (disclosure._widthAnimation) {
+      try {
+        disclosure._widthAnimation.cancel();
+      } catch (_) {}
+      disclosure._widthAnimation = null;
+    }
+    disclosure._widthAnimationFrame = null;
+    disclosure.style.width = '';
+    disclosure.style.minWidth = '';
+    disclosure.style.maxWidth = '';
+    panel.classList.remove('is-collapsing');
+  };
+
+  if (Math.abs(currentWidth - targetWidth) < 2) {
+    cleanup();
+    return;
+  }
+
+  if (typeof disclosure.animate === 'function') {
+    const animation = disclosure.animate(
+      [
+        { width: `${currentWidth}px`, minWidth: `${currentWidth}px`, maxWidth: `${currentWidth}px` },
+        { width: `${targetWidth}px`, minWidth: `${targetWidth}px`, maxWidth: `${targetWidth}px` },
+      ],
+      {
+        duration: SOURCES_WIDTH_COLLAPSE_MS,
+        delay: 110,
+        easing: 'cubic-bezier(.22,1,.36,1)',
+        fill: 'forwards',
+      }
+    );
+    disclosure._widthAnimation = animation;
+    animation.onfinish = cleanup;
+    animation.oncancel = cleanup;
+    return;
+  }
+
+  disclosure._widthAnimationFrame = requestAnimationFrame(() => {
+    disclosure.style.transition = `width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), min-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), max-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1)`;
+    disclosure.style.width = `${targetWidth}px`;
+    disclosure.style.minWidth = `${targetWidth}px`;
+    disclosure.style.maxWidth = `${targetWidth}px`;
+
+    const onWidthEnd = event => {
+      if (event.propertyName !== 'width') return;
+      disclosure.removeEventListener('transitionend', onWidthEnd);
+      disclosure.style.transition = '';
+      cleanup();
+    };
+
+    disclosure.addEventListener('transitionend', onWidthEnd);
+  });
+}
+
+function setupSourcesPanel(panel) {
+  if (!panel) return;
+
+  const summary = panel.querySelector('.message-sources-summary');
+  const body = panel.querySelector('.message-sources-body');
+  const moreButton = panel.querySelector('.message-sources-more');
+
+  const resetExtraSources = () => {
+    panel.querySelectorAll('.message-source-item.is-extra').forEach(item => {
+      item.hidden = true;
+      item.classList.remove('is-revealed');
+    });
+    if (moreButton) {
+      moreButton.hidden = false;
+      moreButton.textContent = 'More content';
+    }
+  };
+
+  if (summary && body) {
+    summary.addEventListener('click', () => {
+      const expand = summary.getAttribute('aria-expanded') !== 'true';
+      summary.setAttribute('aria-expanded', expand ? 'true' : 'false');
+
+      if (expand) {
+        panel.classList.remove('is-collapsing');
+        const disclosure = panel.querySelector('.message-sources-disclosure');
+        if (disclosure) {
+          if (disclosure._widthAnimation) {
+            try {
+              disclosure._widthAnimation.cancel();
+            } catch (_) {}
+            disclosure._widthAnimation = null;
+          }
+          if (disclosure._widthAnimationFrame) {
+            cancelAnimationFrame(disclosure._widthAnimationFrame);
+            disclosure._widthAnimationFrame = null;
+          }
+          disclosure.style.width = '';
+          disclosure.style.minWidth = '';
+          disclosure.style.maxWidth = '';
+        }
+        panel.classList.add('is-open');
+        animateSourcesBody(body, true);
+        return;
+      }
+
+      animateSourcesBody(body, false, () => animateSourcesDisclosureCollapse(panel, summary));
+      resetExtraSources();
+    });
+  }
+
+  if (moreButton) {
+    moreButton.addEventListener('click', () => {
+      panel.querySelectorAll('.message-source-item.is-extra').forEach((item, index) => {
+        item.hidden = false;
+        requestAnimationFrame(() => {
+          item.classList.add('is-revealed');
+          item.style.setProperty('--source-index', String(index + 4));
+        });
+      });
+      moreButton.hidden = true;
+    });
+  }
+}
+
 function renderSourcesPanel(panel, sources) {
   if (!panel) return;
   if (!Array.isArray(sources) || sources.length === 0) {
-    panel.classList.remove('is-visible');
+    panel.classList.remove('is-visible', 'is-open');
     panel.setAttribute('aria-hidden', 'true');
     panel.innerHTML = '';
     return;
   }
 
-  const details = sources.map(source => `
-    <li class="message-source-item">
-      <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
-        ${escapeHtml(source.title || source.url || 'Source')}
-      </a>
-      <div class="message-source-meta">${escapeHtml(source.provider || 'Source')}</div>
-      <p class="message-source-snippet">${escapeHtml(source.snippet || '')}</p>
-    </li>
-  `).join('');
+  const bodyId = `sources-body-${++sourcesDisclosureId}`;
+  const previewCount = 3;
 
+  const renderSourceItem = (source, index) => {
+    const hostname = getSourceHostname(source.url || '') || source.provider || 'Source';
+    const isExtra = index >= previewCount;
+    return `
+      <li class="message-source-item${isExtra ? ' is-extra' : ''}" ${isExtra ? 'hidden' : ''} style="--source-index:${index + 1}">
+        <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
+          <span class="message-source-topline">
+            <span class="message-source-site">
+              <span class="message-source-favicon-wrap" aria-hidden="true">
+                <img
+                  class="message-source-favicon"
+                  src="https://www.google.com/s2/favicons?domain=${escapeHtml(hostname)}&sz=64"
+                  alt=""
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                >
+              </span>
+              <span class="message-source-domain">${escapeHtml(hostname)}</span>
+            </span>
+            <span class="message-source-arrow" aria-hidden="true">↗</span>
+          </span>
+          <span class="message-source-title">${escapeHtml(source.title || source.url || 'Source')}</span>
+          ${source.snippet ? `<span class="message-source-snippet">${escapeHtml(source.snippet)}</span>` : ''}
+        </a>
+      </li>
+    `;
+  };
+
+  const sourceDetails = sources.map((source, index) => renderSourceItem(source, index)).join('');
+  const moreButton = sources.length > previewCount
+    ? '<button class="message-sources-more" type="button">More content</button>'
+    : '';
+
+  panel.classList.remove('is-visible', 'is-open');
   panel.innerHTML = `
-    <div class="message-sources-divider" aria-hidden="true"></div>
-    <div class="message-sources-header">
-      <span class="message-sources-count">${sources.length} Sources were used</span>
+    <div class="message-sources-disclosure">
+      <button class="message-sources-summary" type="button" aria-expanded="false" aria-controls="${bodyId}">
+        <span class="message-sources-summary-copy">
+          <span class="message-sources-label">Sources</span>
+          <span class="message-sources-count">${sources.length}</span>
+        </span>
+        <span class="message-sources-caret" aria-hidden="true"></span>
+      </button>
+      <div class="message-sources-body" id="${bodyId}" hidden>
+        <ul class="message-sources-list">${sourceDetails}</ul>
+        ${moreButton}
+      </div>
     </div>
-    <ul class="message-sources-list">${details}</ul>
   `;
+  setupSourcesPanel(panel);
   panel.setAttribute('aria-hidden', 'false');
   requestAnimationFrame(() => {
     panel.classList.add('is-visible');
@@ -569,12 +935,32 @@ function animateStrictFinalAnswer(strictState, text, sources) {
   });
 }
 
+function setInlinePendingState(streamState, label = 'Thinking') {
+  if (!streamState || !streamState.inlinePendingTitle || !streamState.inlinePending) return;
+  streamState.inlinePendingTitle.textContent = label;
+  streamState.inlinePending.classList.add('is-visible');
+  if (label === 'Searching web') {
+    streamState.inlinePending.classList.add('is-searching');
+  } else {
+    streamState.inlinePending.classList.remove('is-searching');
+  }
+}
+
+function hideInlinePending(streamState) {
+  if (!streamState || !streamState.inlinePending) return;
+  streamState.inlinePending.classList.remove('is-visible', 'is-searching');
+  streamState.inlinePending.classList.add('is-complete');
+  streamState.bubble.classList.remove('is-pending');
+  streamState.content.classList.remove('is-hidden');
+}
+
 function finalizeStreamingMessage(streamState) {
   if (!streamState) return;
 
   streamState.completed = true;
   streamState.bubble.classList.remove('streaming');
   streamState.bubble.classList.remove('searching');
+  if (streamState.hasVisibleContent) hideInlinePending(streamState);
   renderStreamingContent(streamState, true);
   renderSources(streamState);
 
@@ -652,6 +1038,10 @@ function scheduleStreamingFrame(streamState) {
 
 function pushStreamText(streamState, text) {
   if (!streamState || !text) return;
+  if (!streamState.hasVisibleContent) {
+    streamState.hasVisibleContent = true;
+    hideInlinePending(streamState);
+  }
   streamState.rawText += text;
   scheduleStreamingFrame(streamState);
 }
@@ -664,6 +1054,10 @@ function finishStream(streamState) {
 
 function failStream(streamState, message) {
   if (!streamState) return;
+  if (!streamState.hasVisibleContent) {
+    streamState.hasVisibleContent = true;
+    hideInlinePending(streamState);
+  }
   streamState.rawText = message;
   streamState.displayLength = 0;
   streamState.completed = true;
@@ -681,9 +1075,52 @@ function clearPendingHideTimer(streamState) {
   }
 }
 
+function clearQueryRotation(streamState) {
+  if (!streamState) return;
+  if (streamState.queryRotationTimer) {
+    clearTimeout(streamState.queryRotationTimer);
+    streamState.queryRotationTimer = null;
+  }
+  if (streamState.queryRotationInterval) {
+    clearInterval(streamState.queryRotationInterval);
+    streamState.queryRotationInterval = null;
+  }
+  if (streamState.pendingLabel) {
+    streamState.pendingLabel.classList.remove('is-shimmering');
+  }
+}
+
+function startQueryRotation(streamState, queries) {
+  if (!streamState || !streamState.pendingLabel) return;
+  clearQueryRotation(streamState);
+  streamState.searchQueries = Array.isArray(queries) ? queries.filter(Boolean) : [];
+  streamState.queryRotationIndex = 0;
+  streamState.pendingLabel.textContent = 'Searching web';
+  streamState.pendingLabel.classList.add('is-shimmering');
+
+  if (streamState.searchQueries.length === 0) return;
+
+  streamState.queryRotationTimer = setTimeout(() => {
+    if (!streamState.pendingLabel) return;
+    streamState.pendingLabel.classList.remove('is-shimmering');
+    streamState.pendingLabel.textContent = streamState.searchQueries[0];
+    streamState.queryRotationIndex = 1;
+    streamState.queryRotationInterval = setInterval(() => {
+      if (!streamState.pendingLabel || streamState.searchQueries.length === 0) return;
+      const idx = streamState.queryRotationIndex % streamState.searchQueries.length;
+      streamState.pendingLabel.textContent = streamState.searchQueries[idx];
+      streamState.queryRotationIndex += 1;
+    }, SEARCH_QUERY_ROTATE_INTERVAL_MS);
+  }, SEARCH_QUERY_ROTATE_DELAY_MS);
+}
+
 function showPendingPanel(streamState) {
   if (!streamState) return;
   clearPendingHideTimer(streamState);
+  if (streamState.searchRow) {
+    streamState.searchRow.classList.remove('is-leaving');
+    streamState.searchRow.setAttribute('aria-hidden', 'false');
+  }
   streamState.pendingPanel.classList.remove('is-leaving');
   streamState.pendingPanel.classList.add('is-visible');
   streamState.pendingPanel.setAttribute('aria-hidden', 'false');
@@ -692,7 +1129,13 @@ function showPendingPanel(streamState) {
 function hidePendingPanel(streamState, immediate = false) {
   if (!streamState) return;
   clearPendingHideTimer(streamState);
+  clearQueryRotation(streamState);
   if (immediate) {
+    if (streamState.searchRow) {
+      streamState.searchRow.classList.remove('is-leaving');
+      streamState.searchRow.setAttribute('aria-hidden', 'true');
+      streamState.searchRow.remove();
+    }
     streamState.pendingPanel.classList.remove('is-visible', 'is-leaving');
     streamState.pendingPanel.setAttribute('aria-hidden', 'true');
     return;
@@ -702,15 +1145,27 @@ function hidePendingPanel(streamState, immediate = false) {
   streamState.pendingHideTimer = setTimeout(() => {
     streamState.pendingPanel.classList.remove('is-leaving');
     streamState.pendingPanel.setAttribute('aria-hidden', 'true');
+    if (streamState.searchRow) {
+      streamState.searchRow.classList.add('is-leaving');
+      setTimeout(() => {
+        if (streamState.searchRow) {
+          streamState.searchRow.setAttribute('aria-hidden', 'true');
+          streamState.searchRow.remove();
+          streamState.searchRow = null;
+        }
+      }, PANEL_TRANSITION_MS);
+    }
     streamState.pendingHideTimer = null;
   }, PANEL_TRANSITION_MS);
 }
 
-function startSearchPending(streamState) {
+function startSearchPending(streamState, queries = []) {
   if (!streamState) return;
   streamState.searchPending = true;
   streamState.bubble.classList.add('searching');
+  setInlinePendingState(streamState, 'Searching web');
   showPendingPanel(streamState);
+  startQueryRotation(streamState, queries);
   scrollToBottom(true);
 }
 
@@ -719,6 +1174,9 @@ function finishSearchPending(streamState, sources) {
   streamState.searchPending = false;
   streamState.searchSources = Array.isArray(sources) ? sources.slice(0, 6) : [];
   streamState.bubble.classList.remove('searching');
+  if (!streamState.hasVisibleContent) {
+    setInlinePendingState(streamState, 'Thinking');
+  }
   hidePendingPanel(streamState);
 }
 
@@ -731,12 +1189,14 @@ fetch('/api/demos')
   .then(r => r.json())
   .then(demos => {
     demos.forEach(demo => {
+      const isReject = demo.key.includes('reject');
+      const tone = isReject ? 'Guardrail sample' : 'Try this prompt';
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'demo-btn' + (demo.key.includes('reject') ? ' reject' : '');
+      btn.className = 'demo-btn' + (isReject ? ' reject' : '');
       btn.innerHTML = `
         <span class="demo-label">${escapeHtml(demo.prompt)}</span>
-        <span class="demo-hint">${demo.key.includes('reject') ? 'Guardrail sample' : 'Try this prompt'}</span>
+        <span class="demo-hint">${tone}</span>
       `;
       btn.title = demo.prompt;
       btn.onclick = () => sendMessage(demo.prompt);
@@ -814,7 +1274,7 @@ async function sendStreamingMessage(msg) {
             if (payload.type === 'token' && payload.token) {
               pushStreamText(streamState, payload.token);
             } else if (payload.type === 'search_start') {
-              startSearchPending(streamState);
+              startSearchPending(streamState, payload.queries || []);
             } else if (payload.type === 'search_end') {
               finishSearchPending(streamState, payload.sources || []);
             } else if (payload.type === 'done') {
@@ -834,6 +1294,8 @@ async function sendStreamingMessage(msg) {
     finishStream(streamState);
   } catch (err) {
     if (err && err.name === 'AbortError') {
+      clearQueryRotation(streamState);
+      if (streamState.searchRow) streamState.searchRow.remove();
       streamState.row.remove();
     } else {
       failStream(streamState, '[Error] Request failed.');
