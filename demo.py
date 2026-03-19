@@ -39,12 +39,13 @@ Built-in shortcut commands (type the keyword and press Enter):
 import asyncio
 import logging
 import sys
+from typing import cast
 
 from config.settings import DEMO_PROMPTS
 from config.settings import SEARCH_ENABLED, STRICT_MODE_ENABLED
 from core.conversation import ConversationManager
-from core.response_handler import ResponseHandler
-from core.search import SearchService
+from core.response_handler import ChatMode, ResponseHandler
+from core.search import SearchMode, SearchService
 from llm import get_llm_client
 
 # Configure basic logging (only show warnings+ for cleaner CLI output)
@@ -78,7 +79,7 @@ def print_header() -> None:
     print()
 
 
-def print_status(mode: str, search_mode: str) -> None:
+def print_status(mode: ChatMode, search_mode: SearchMode) -> None:
     """Print current runtime control settings."""
     print(f"[STATUS] Mode: {mode} | Search: {search_mode}")
     if not STRICT_MODE_ENABLED:
@@ -108,8 +109,8 @@ async def main() -> None:
         strict_generator=get_llm_client("strict_generator"),
         strict_auditor=get_llm_client("strict_auditor"),
     )
-    current_mode = "normal"
-    current_search_mode = "auto" if SEARCH_ENABLED else "off"
+    current_mode: ChatMode = "normal"
+    current_search_mode: SearchMode = "auto" if SEARCH_ENABLED else "off"
     print_status(current_mode, current_search_mode)
 
     while True:
@@ -145,7 +146,7 @@ async def main() -> None:
             if requested_mode == "strict" and not STRICT_MODE_ENABLED:
                 print("[ERROR] Strict mode is disabled in configuration.\n")
                 continue
-            current_mode = requested_mode
+            current_mode = cast(ChatMode, requested_mode)
             print_status(current_mode, current_search_mode)
             continue
 
@@ -157,7 +158,7 @@ async def main() -> None:
             if requested_search_mode != "off" and not SEARCH_ENABLED:
                 print("[ERROR] Search is disabled in configuration.\n")
                 continue
-            current_search_mode = requested_search_mode
+            current_search_mode = cast(SearchMode, requested_search_mode)
             print_status(current_mode, current_search_mode)
             continue
 
