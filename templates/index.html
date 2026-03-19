@@ -163,6 +163,18 @@ function protectMathSegments(rawText) {
   return { text, segments, token };
 }
 
+function normalizeAssistantMarkdown(rawText) {
+  let text = (rawText || '').replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '');
+
+  const trimmedStart = text.trimStart();
+  if (trimmedStart.startsWith('```') || trimmedStart.startsWith('~~~')) {
+    return text;
+  }
+
+  text = text.replace(/^((?:\n)*)[ \t]+(?=\S)/, '$1');
+  return text;
+}
+
 function renderMath(container, retries = 10) {
   if (!container) return;
 
@@ -188,7 +200,8 @@ function renderMath(container, retries = 10) {
 function renderMarkdownAndMath(rawText, container) {
   if (!container) return;
 
-  const protectedMath = protectMathSegments(rawText || '');
+  const normalizedText = normalizeAssistantMarkdown(rawText || '');
+  const protectedMath = protectMathSegments(normalizedText);
   let html = marked.parse(protectedMath.text);
 
   protectedMath.segments.forEach((segment, index) => {
