@@ -29,6 +29,8 @@
   --radius-sm: 14px;
   --content-w: 960px;
   --content-rail: 18px;
+  --scrollbar-thumb: rgba(255, 255, 255, 0);
+  --scrollbar-track: rgba(255, 255, 255, 0);
 }
 
 html, body {
@@ -74,6 +76,11 @@ a:focus-visible {
   min-height: 100dvh;
   overflow: hidden;
   isolation: isolate;
+}
+
+.app-shell.is-scrolling {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-track: rgba(255, 255, 255, 0.03);
 }
 
 .app-shell::before {
@@ -172,6 +179,11 @@ a:focus-visible {
   -webkit-overflow-scrolling: touch;
   padding: 6px 28px 28px;
   scroll-behavior: smooth;
+}
+
+.chat-area.is-home-locked {
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .chat-inner {
@@ -1788,9 +1800,36 @@ a:focus-visible {
   transform: none;
 }
 
-.chat-area::-webkit-scrollbar { width: 8px; }
-.chat-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
-.chat-area::-webkit-scrollbar-track { background: transparent; }
+.chat-area,
+.msg-bubble pre,
+.msg-bubble .katex-display,
+.subjects-menu-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.chat-area::-webkit-scrollbar,
+.msg-bubble pre::-webkit-scrollbar,
+.msg-bubble .katex-display::-webkit-scrollbar,
+.subjects-menu-list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-area::-webkit-scrollbar-thumb,
+.msg-bubble pre::-webkit-scrollbar-thumb,
+.msg-bubble .katex-display::-webkit-scrollbar-thumb,
+.subjects-menu-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.chat-area::-webkit-scrollbar-track,
+.msg-bubble pre::-webkit-scrollbar-track,
+.msg-bubble .katex-display::-webkit-scrollbar-track,
+.subjects-menu-list::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
 
 @keyframes messageEnter {
   from { opacity: 0; transform: translateY(12px) scale(0.992); }

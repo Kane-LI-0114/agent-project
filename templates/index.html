@@ -164,6 +164,7 @@ const SOURCES_PANEL_TRANSITION_MS = 420;
 const SOURCES_WIDTH_COLLAPSE_MS = 380;
 const WELCOME_REENTRY_DURATION_MS = 980;
 const DEMO_SWAP_DURATION_MS = 220;
+const SCROLLBAR_IDLE_DELAY_MS = 760;
 let sourcesDisclosureId = 0;
 const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
 const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
@@ -179,7 +180,9 @@ let demoDeckAnimationTimer = null;
 let demoRotateButtonTimer = null;
 let demoDeckSwapTimer = null;
 let demoTargetDeckIndex = 0;
+let scrollActivityTimer = null;
 
+const appShell = document.querySelector('.app-shell');
 const chatArea = document.getElementById('chatArea');
 const welcomeScreen = document.getElementById('welcomeScreen');
 const messageList = document.getElementById('messageList');
@@ -1294,9 +1297,35 @@ function isNearBottom() {
   return distance < BOTTOM_STICKY_THRESHOLD;
 }
 
+function markScrollActivity() {
+  if (!appShell) return;
+  appShell.classList.add('is-scrolling');
+  if (scrollActivityTimer) {
+    clearTimeout(scrollActivityTimer);
+  }
+  scrollActivityTimer = setTimeout(() => {
+    appShell.classList.remove('is-scrolling');
+    scrollActivityTimer = null;
+  }, SCROLLBAR_IDLE_DELAY_MS);
+}
+
+function isTrackedScrollSurface(target) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest('.chat-area, .msg-bubble pre, .msg-bubble .katex-display, .subjects-menu-list'));
+}
+
+function setHomeScrollLocked(locked) {
+  if (!chatArea) return;
+  chatArea.classList.toggle('is-home-locked', !!locked);
+  if (locked) {
+    chatArea.scrollTop = 0;
+  }
+}
+
 function scrollToBottom(force = false) {
   if (force || isNearBottom()) {
     chatArea.scrollTop = chatArea.scrollHeight;
+    markScrollActivity();
   }
 }
 
@@ -1309,6 +1338,7 @@ userInput.addEventListener('input', syncTextareaHeight);
 
 function hideWelcomeScreen() {
   welcomeScreen.style.display = 'none';
+  setHomeScrollLocked(false);
 }
 
 function triggerWelcomeEntrance() {
@@ -1329,6 +1359,7 @@ function triggerWelcomeEntrance() {
 
 function showWelcomeScreen() {
   welcomeScreen.style.display = '';
+  setHomeScrollLocked(true);
   requestAnimationFrame(() => {
     triggerWelcomeEntrance();
   });
@@ -1457,6 +1488,25 @@ if (rotateDemosBtn) {
 }
 
 renderDemoDeck(0);
+setHomeScrollLocked(welcomeScreen && welcomeScreen.style.display !== 'none');
+
+document.addEventListener('scroll', event => {
+  if (isTrackedScrollSurface(event.target)) {
+    markScrollActivity();
+  }
+}, true);
+
+document.addEventListener('wheel', event => {
+  if (isTrackedScrollSurface(event.target)) {
+    markScrollActivity();
+  }
+}, { passive: true });
+
+document.addEventListener('touchmove', event => {
+  if (isTrackedScrollSurface(event.target)) {
+    markScrollActivity();
+  }
+}, { passive: true });
 
 function appendMessage(role, text) {
   const row = document.createElement('div');
