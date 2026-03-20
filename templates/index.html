@@ -37,7 +37,23 @@
           <div class="welcome-panel">
             <h2>What can I help with for your coursework today?</h2>
           </div>
-          <div class="demo-grid" id="demoGrid"></div>
+          <div class="welcome-demo-stack">
+            <div class="demo-grid" id="demoGrid"></div>
+            <div class="demo-rotator">
+              <button class="demo-rotate-btn" id="rotateDemosBtn" type="button" aria-label="Show another set of starter prompts">
+                <span class="demo-rotate-icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M12.75 5.75C12.21 4.31 10.83 3.28 9.2 3.04C7.57 2.8 5.95 3.38 4.84 4.57L3.75 5.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3.75 3.25V5.75H6.25" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3.25 10.25C3.79 11.69 5.17 12.72 6.8 12.96C8.43 13.2 10.05 12.62 11.16 11.43L12.25 10.25" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12.25 12.75V10.25H9.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+                <span class="demo-rotate-text">More prompts</span>
+              </button>
+              <div class="demo-rotator-status" id="demoRotatorStatus" aria-live="polite"></div>
+            </div>
+          </div>
         </div>
         <div class="messages" id="messageList"></div>
       </div>
@@ -146,6 +162,8 @@ const BOTTOM_STICKY_THRESHOLD = 120;
 const PANEL_TRANSITION_MS = 320;
 const SOURCES_PANEL_TRANSITION_MS = 420;
 const SOURCES_WIDTH_COLLAPSE_MS = 380;
+const WELCOME_REENTRY_DURATION_MS = 980;
+const DEMO_SWAP_DURATION_MS = 220;
 let sourcesDisclosureId = 0;
 const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
 const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
@@ -156,11 +174,18 @@ let selectedSubjects = loadSelectedSubjects();
 let lastSentSubjects = selectedSubjects.slice();
 let pendingSubjectChangeNote = '';
 let pendingSubjectNotice = null;
+let welcomeEntranceTimer = null;
+let demoDeckAnimationTimer = null;
+let demoRotateButtonTimer = null;
+let demoDeckSwapTimer = null;
+let demoTargetDeckIndex = 0;
 
 const chatArea = document.getElementById('chatArea');
 const welcomeScreen = document.getElementById('welcomeScreen');
 const messageList = document.getElementById('messageList');
 const demoGrid = document.getElementById('demoGrid');
+const rotateDemosBtn = document.getElementById('rotateDemosBtn');
+const demoRotatorStatus = document.getElementById('demoRotatorStatus');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
 const searchStatus = document.getElementById('searchStatus');
@@ -174,6 +199,669 @@ const subjectsDropdown = document.getElementById('subjectsDropdown');
 const subjectsTrigger = document.getElementById('subjectsTrigger');
 const subjectsTriggerValue = document.getElementById('subjectsTriggerValue');
 const subjectsMenuList = document.getElementById('subjectsMenuList');
+
+const DEMO_SUBJECT_LABELS = {
+  "math": "Math",
+  "history": "History",
+  "geography": "Geography",
+  "finance": "Finance",
+  "economics": "Economics",
+  "philosophy": "Philosophy",
+  "chemistry": "Chemistry",
+  "travel": "Travel",
+  "entertainment": "Entertainment",
+  "social": "Social",
+  "shopping": "Shopping",
+  "fashion": "Fashion",
+  "food": "Food",
+  "lifestyle": "Lifestyle",
+  "sports": "Sports"
+};
+
+const DEMO_ROTATION_DECKS = [
+  [
+    {
+      "prompt": "Find the derivative of x^3e^x and explain each rule you use.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Compare the causes of the French Revolution and the Haitian Revolution.",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why do monsoon climates shift so dramatically between wet and dry seasons?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Explain net present value with a simple two-year cash-flow example.",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "Plan a three-day food tour in Osaka with hotel suggestions.",
+      "subject": "travel",
+      "reject": true
+    },
+    {
+      "prompt": "Recommend a Netflix series for a lazy weekend.",
+      "subject": "entertainment",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Solve 2x^2 - 7x - 4 = 0 and verify both roots.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How did the Silk Road reshape trade and cultural exchange in Eurasia?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why do coastal cities usually have milder temperatures than inland cities?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "What is price elasticity of demand, and why does it matter for firms?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Write a funny roast for my friend’s birthday party.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Choose the best gaming laptop under $1,200 for me.",
+      "subject": "shopping",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Use completing the square to rewrite y = x^2 - 6x + 5.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Explain why the Treaty of Versailles helped destabilize Europe after World War I.",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Compare bonds and stocks for a beginner investor in one clear table.",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "What is the difference between utilitarianism and deontology?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Draft an excuse email to skip tomorrow's class.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Which sneaker brand is coolest right now for college students?",
+      "subject": "fashion",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "A bag has 5 red and 3 blue marbles. What is the probability of drawing two red marbles without replacement?",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "What factors allowed the Ottoman Empire to control key trade routes for so long?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why does atomic radius generally increase down a group?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Explain opportunity cost using a student deciding between studying and part-time work.",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Suggest the best first date spot near HKUST.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Help me write a viral TikTok caption about campus life.",
+      "subject": "social",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Find the area under y = 2x from x = 1 to x = 4.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How did the printing press change religious and political life in Europe?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why are some regions more vulnerable to earthquakes than others?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Balance the equation Fe + O2 -> Fe2O3 and show the steps.",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Pick a birthday gift for my roommate based on current trends.",
+      "subject": "shopping",
+      "reject": true
+    },
+    {
+      "prompt": "Make me a workout plan to get abs in six weeks.",
+      "subject": "lifestyle",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Explain why the limit of sin x / x approaches 1 as x goes to 0.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Compare the leadership styles of Qin Shi Huang and Augustus.",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What is compound interest, and how does it grow over time?",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "How do weak acids differ from strong acids in water?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Write a catchy bio for my dating profile.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Should I buy concert tickets now or wait for resale prices?",
+      "subject": "entertainment",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Use Bayes' theorem in a simple medical-test example.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Why did decolonization accelerate after World War II?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "How do exchange rates affect imports and exports?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Why are deserts often found near 30 degrees latitude?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Rank the best bubble tea shops around campus.",
+      "subject": "food",
+      "reject": true
+    },
+    {
+      "prompt": "Help me choose a Halloween costume that will stand out.",
+      "subject": "fashion",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Convert 135 degrees to radians and place it on the unit circle.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "What were the main social impacts of the Industrial Revolution on urban workers?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Explain the difference between revenue, profit, and cash flow.",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "How do catalysts speed up chemical reactions without being consumed?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Write a prank text to confuse my class group chat.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Recommend a skincare routine for my oily skin.",
+      "subject": "lifestyle",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Solve the system x + y = 7 and 2x - y = 5.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Why was the Meiji Restoration such a turning point in Japanese history?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What problem is the prisoner's dilemma meant to illustrate?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Why do river deltas form in some places but not others?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Tell me how to sneak snacks into the cinema.",
+      "subject": "lifestyle",
+      "reject": true
+    },
+    {
+      "prompt": "Design a fantasy football draft strategy for this weekend.",
+      "subject": "sports",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Find the mean, median, and mode of 3, 4, 4, 7, 9.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How did propaganda shape public opinion during the Cold War?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Explain inflation with an everyday grocery-price example.",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "What is the difference between primary and secondary market trading?",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "Write lyrics for a breakup song in a sad indie style.",
+      "subject": "entertainment",
+      "reject": true
+    },
+    {
+      "prompt": "Plan my spring-break itinerary with beaches and nightlife.",
+      "subject": "travel",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Factor x^3 - 4x completely.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Why did the Roman Republic transition into the Roman Empire?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "How does population density influence transport planning in megacities?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "What does Aristotle mean by virtue as a habit?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Help me bluff my way through a wine tasting.",
+      "subject": "lifestyle",
+      "reject": true
+    },
+    {
+      "prompt": "Name five luxury watches that look impressive in interviews.",
+      "subject": "fashion",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "A loan charges 6% annual interest. How much will $5,000 grow to in 3 years with annual compounding?",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Compare the causes of World War I and World War II in four concise points.",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why is equilibrium important in supply and demand models?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Explain why noble gases are so chemically unreactive.",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Suggest a wardrobe makeover to look richer on Instagram.",
+      "subject": "fashion",
+      "reject": true
+    },
+    {
+      "prompt": "Write a fake review to get a restaurant discount.",
+      "subject": "food",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Find the sum of the first 12 terms of the arithmetic sequence 5, 8, 11, ...",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Why did the collapse of the Soviet Union reshape the end of the Cold War?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What is the rain shadow effect, and why does it create dry regions?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Why does diversification usually reduce investment risk?",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "Recommend the best brunch spot for parents' weekend.",
+      "subject": "food",
+      "reject": true
+    },
+    {
+      "prompt": "What reality show should I binge tonight if I want drama?",
+      "subject": "entertainment",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Differentiate y = ln(x^2 + 1).",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "Why did the Magna Carta matter for the development of constitutional rule?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "How do endothermic and exothermic reactions differ in energy flow?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "What does Hobbes mean by the social contract?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Help me pack for a four-day trip to Seoul in April.",
+      "subject": "travel",
+      "reject": true
+    },
+    {
+      "prompt": "Give me a flirty opener for someone from my tutorial class.",
+      "subject": "social",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "If a fair coin is tossed 5 times, what is the probability of getting exactly 3 heads?",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "What common pressures helped spark the Revolutions of 1848 across Europe?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What is comparative advantage, and why can trade help both sides?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Why do large cities often experience the urban heat island effect?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "Build me a horror-movie marathon order for tonight.",
+      "subject": "entertainment",
+      "reject": true
+    },
+    {
+      "prompt": "Choose a smartwatch that looks premium for class and internships.",
+      "subject": "shopping",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Use the law of cosines to find the third side of a triangle with sides 7 and 10 and included angle 60°.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How did women's factory work during World War II reshape social expectations?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "Why do bond prices usually fall when interest rates rise?",
+      "subject": "finance",
+      "reject": false
+    },
+    {
+      "prompt": "Why is the pH scale logarithmic rather than linear?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Plan a karaoke setlist that will keep the room singing.",
+      "subject": "entertainment",
+      "reject": true
+    },
+    {
+      "prompt": "Suggest a perfume that feels expensive but approachable.",
+      "subject": "fashion",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "How should I interpret a standard deviation of 12 points in exam scores?",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How did the Berlin Conference reshape political control in Africa?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "How is the trolley problem different from the doctrine of double effect?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Why do price ceilings often create shortages?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Plan a weekend getaway from Hong Kong with scenic views.",
+      "subject": "travel",
+      "reject": true
+    },
+    {
+      "prompt": "Write a funny script for a prank voicemail.",
+      "subject": "social",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Decompose (5x + 7) / ((x + 1)(x + 2)) into partial fractions.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "What internal and external pressures led to the fall of the Qing dynasty?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "How do El Niño and La Niña affect weather patterns around the world?",
+      "subject": "geography",
+      "reject": false
+    },
+    {
+      "prompt": "How does Le Chatelier's principle predict a system's response to change?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Invent a classy wedding hashtag for my friends.",
+      "subject": "social",
+      "reject": true
+    },
+    {
+      "prompt": "Which sneaker resale pair is most likely to impress people right now?",
+      "subject": "shopping",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "Solve log2(x - 1) + log2(x - 3) = 3.",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "How were Spartan and Athenian societies different in values and daily life?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What is diminishing marginal utility in simple everyday terms?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "What is Plato trying to show in the Allegory of the Cave?",
+      "subject": "philosophy",
+      "reject": false
+    },
+    {
+      "prompt": "Give me three air-fryer desserts I can make tonight.",
+      "subject": "food",
+      "reject": true
+    },
+    {
+      "prompt": "Recommend a podcast for my morning commute.",
+      "subject": "entertainment",
+      "reject": true
+    }
+  ],
+  [
+    {
+      "prompt": "How can similar triangles be used to estimate the height of a tree from its shadow?",
+      "subject": "math",
+      "reject": false
+    },
+    {
+      "prompt": "What were the major causes of the Protestant Reformation?",
+      "subject": "history",
+      "reject": false
+    },
+    {
+      "prompt": "What is the difference between frictional, structural, and cyclical unemployment?",
+      "subject": "economics",
+      "reject": false
+    },
+    {
+      "prompt": "Why does electronegativity usually increase across a period?",
+      "subject": "chemistry",
+      "reject": false
+    },
+    {
+      "prompt": "Pick wireless headphones that work for gym sessions and commuting.",
+      "subject": "shopping",
+      "reject": true
+    },
+    {
+      "prompt": "Write an Instagram caption that makes my photos look cooler.",
+      "subject": "social",
+      "reject": true
+    }
+  ]
+];
+
+let currentDemoDeckIndex = 0;
 
 marked.setOptions({
   gfm: true,
@@ -334,7 +1022,29 @@ function buildSubjectChangeNote(subjects) {
   return `Allowed subjects updated: ${normalizeSubjects(subjects).map(formatSubjectLabel).join(', ')}.`;
 }
 
+function getDemoSubjectLabel(subject) {
+  return DEMO_SUBJECT_LABELS[String(subject || '').toLowerCase()] || formatSubjectLabel(subject);
+}
+
+function getVisibleDemoDeck(deck) {
+  const allowed = new Set(normalizeSubjects(selectedSubjects));
+  return (Array.isArray(deck) ? deck : []).filter(card => card.reject || allowed.has(card.subject));
+}
+
+function summarizeDemoSubjects(cards) {
+  const labels = [...new Set(cards.filter(card => !card.reject).map(card => getDemoSubjectLabel(card.subject)))];
+  if (!labels.length) return 'Red examples only';
+  if (labels.length <= 2) return labels.join(' · ');
+  return `${labels.slice(0, 2).join(' · ')} + ${labels.length - 2}`;
+}
+
+function buildDemoDeckStatus(index, cards) {
+  const rejectCount = cards.filter(card => card.reject).length;
+  return `Set ${index + 1} of ${DEMO_ROTATION_DECKS.length} · ${summarizeDemoSubjects(cards)} · ${rejectCount} red`;
+}
+
 function updateSubjectsTriggerValue() {
+
   subjectsTriggerValue.textContent = buildSubjectsSummary(selectedSubjects);
 }
 
@@ -365,19 +1075,31 @@ function handleSubjectsUpdated(nextSubjects) {
   updateSubjectsTriggerValue();
   renderSubjectsMenu();
 
+  const hasConversation = messageList.childElementCount > 0;
+  const welcomeVisible = !!welcomeScreen && welcomeScreen.style.display !== 'none';
+  transitionDemoDeck(demoTargetDeckIndex, { animate: !hasConversation && welcomeVisible });
+
   if (areSubjectsEqual(selectedSubjects, lastSentSubjects)) {
     pendingSubjectChangeNote = '';
     if (pendingSubjectNotice && pendingSubjectNotice.isConnected) {
       pendingSubjectNotice.remove();
     }
     pendingSubjectNotice = null;
-    if (messageList.childElementCount === 0) {
+    if (!hasConversation && !welcomeVisible) {
       showWelcomeScreen();
     }
     return;
   }
 
   pendingSubjectChangeNote = buildSubjectChangeNote(selectedSubjects);
+
+  if (!hasConversation) {
+    if (!welcomeVisible) {
+      showWelcomeScreen();
+    }
+    return;
+  }
+
   hideWelcomeScreen();
   appendOrUpdateSubjectNotice(pendingSubjectChangeNote);
 }
@@ -589,9 +1311,152 @@ function hideWelcomeScreen() {
   welcomeScreen.style.display = 'none';
 }
 
+function triggerWelcomeEntrance() {
+  if (!welcomeScreen || welcomeScreen.style.display === 'none') return;
+
+  welcomeScreen.classList.remove('is-reentering');
+  void welcomeScreen.offsetWidth;
+  welcomeScreen.classList.add('is-reentering');
+
+  if (welcomeEntranceTimer) {
+    clearTimeout(welcomeEntranceTimer);
+  }
+  welcomeEntranceTimer = setTimeout(() => {
+    welcomeScreen.classList.remove('is-reentering');
+    welcomeEntranceTimer = null;
+  }, WELCOME_REENTRY_DURATION_MS);
+}
+
 function showWelcomeScreen() {
   welcomeScreen.style.display = '';
+  requestAnimationFrame(() => {
+    triggerWelcomeEntrance();
+  });
 }
+
+function triggerDemoDeckEntrance() {
+  if (!demoGrid) return;
+
+  demoGrid.classList.remove('is-refreshing');
+  void demoGrid.offsetWidth;
+  demoGrid.classList.add('is-refreshing');
+
+  if (demoDeckAnimationTimer) {
+    clearTimeout(demoDeckAnimationTimer);
+  }
+  demoDeckAnimationTimer = setTimeout(() => {
+    demoGrid.classList.remove('is-refreshing');
+    demoDeckAnimationTimer = null;
+  }, 820);
+}
+
+function renderDemoDeck(index) {
+  if (!demoGrid || !DEMO_ROTATION_DECKS.length) return;
+
+  const normalizedIndex = ((index % DEMO_ROTATION_DECKS.length) + DEMO_ROTATION_DECKS.length) % DEMO_ROTATION_DECKS.length;
+  const deck = DEMO_ROTATION_DECKS[normalizedIndex];
+  const visibleDeck = getVisibleDemoDeck(deck);
+  currentDemoDeckIndex = normalizedIndex;
+  demoTargetDeckIndex = normalizedIndex;
+  demoGrid.innerHTML = '';
+  demoGrid.dataset.count = String(visibleDeck.length);
+
+  visibleDeck.forEach((demo, cardIndex) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'demo-btn' + (demo.reject ? ' reject' : '');
+    btn.dataset.subject = demo.subject || '';
+    btn.style.setProperty('--demo-index', String(cardIndex));
+    btn.title = demo.prompt;
+    btn.innerHTML = `
+      <span class="demo-card-top">
+        <span class="demo-chip demo-chip-subject">${escapeHtml(getDemoSubjectLabel(demo.subject))}</span>
+        <span class="demo-card-state${demo.reject ? ' reject' : ''}">${demo.reject ? 'Will refuse' : 'In scope'}</span>
+      </span>
+      <span class="demo-label">${escapeHtml(demo.prompt)}</span>
+    `;
+    btn.addEventListener('click', () => sendMessage(demo.prompt));
+    demoGrid.appendChild(btn);
+  });
+
+  if (demoRotatorStatus) {
+    demoRotatorStatus.textContent = buildDemoDeckStatus(normalizedIndex, visibleDeck);
+  }
+}
+
+function pulseDemoRotateButton() {
+  if (!rotateDemosBtn) return;
+
+  rotateDemosBtn.classList.remove('is-rotating');
+  void rotateDemosBtn.offsetWidth;
+  rotateDemosBtn.classList.add('is-rotating');
+
+  if (demoRotateButtonTimer) {
+    clearTimeout(demoRotateButtonTimer);
+  }
+  demoRotateButtonTimer = setTimeout(() => {
+    rotateDemosBtn.classList.remove('is-rotating');
+    demoRotateButtonTimer = null;
+  }, 520);
+}
+
+function transitionDemoDeck(index, { animate = true } = {}) {
+  if (!demoGrid || !DEMO_ROTATION_DECKS.length) return;
+
+  const normalizedIndex = ((index % DEMO_ROTATION_DECKS.length) + DEMO_ROTATION_DECKS.length) % DEMO_ROTATION_DECKS.length;
+  demoTargetDeckIndex = normalizedIndex;
+
+  if (demoDeckSwapTimer) {
+    clearTimeout(demoDeckSwapTimer);
+    demoDeckSwapTimer = null;
+  }
+
+  if (demoDeckAnimationTimer) {
+    clearTimeout(demoDeckAnimationTimer);
+    demoDeckAnimationTimer = null;
+    demoGrid.classList.remove('is-refreshing');
+  }
+
+  if (!animate) {
+    demoGrid.classList.remove('is-transitioning-out');
+    if (demoRotatorStatus) {
+      demoRotatorStatus.classList.remove('is-updating');
+    }
+    renderDemoDeck(normalizedIndex);
+    return;
+  }
+
+  demoGrid.classList.remove('is-transitioning-out');
+  void demoGrid.offsetWidth;
+  demoGrid.classList.add('is-transitioning-out');
+  if (demoRotatorStatus) {
+    demoRotatorStatus.classList.add('is-updating');
+  }
+
+  demoDeckSwapTimer = setTimeout(() => {
+    renderDemoDeck(demoTargetDeckIndex);
+    demoGrid.classList.remove('is-transitioning-out');
+    if (demoRotatorStatus) {
+      demoRotatorStatus.classList.remove('is-updating');
+    }
+    triggerDemoDeckEntrance();
+    demoDeckSwapTimer = null;
+  }, DEMO_SWAP_DURATION_MS);
+}
+
+function rotateDemoDeck() {
+  if (!DEMO_ROTATION_DECKS.length) return;
+
+  pulseDemoRotateButton();
+  const baseIndex = demoDeckSwapTimer ? demoTargetDeckIndex : currentDemoDeckIndex;
+  transitionDemoDeck(baseIndex + 1, { animate: true });
+}
+
+if (rotateDemosBtn) {
+  rotateDemosBtn.addEventListener('click', rotateDemoDeck);
+}
+
+renderDemoDeck(0);
 
 function appendMessage(role, text) {
   const row = document.createElement('div');
@@ -1508,24 +2373,9 @@ function renderSources(streamState) {
   renderSourcesPanel(streamState.sourcesPanel, streamState.searchSources);
 }
 
-fetch('/api/demos')
-  .then(r => r.json())
-  .then(demos => {
-    demos.forEach(demo => {
-      const isReject = demo.key.includes('reject');
-      const tone = isReject ? 'Guardrail sample' : 'Try this prompt';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'demo-btn' + (isReject ? ' reject' : '');
-      btn.innerHTML = `
-        <span class="demo-label">${escapeHtml(demo.prompt)}</span>
-        <span class="demo-hint">${tone}</span>
-      `;
-      btn.title = demo.prompt;
-      btn.onclick = () => sendMessage(demo.prompt);
-      demoGrid.appendChild(btn);
-    });
-  });
+if (welcomeScreen.style.display !== 'none') {
+  triggerWelcomeEntrance();
+}
 
 async function sendMessage(text) {
   if (isLoading) return;
