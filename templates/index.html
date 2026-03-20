@@ -144,6 +144,23 @@
       </div>
     </div>
   </div>
+  <button class="sources-drawer-backdrop" id="sourcesDrawerBackdrop" type="button" aria-hidden="true" tabindex="-1" hidden></button>
+  <aside class="sources-drawer" id="sourcesDrawer" aria-hidden="true" aria-labelledby="sourcesDrawerTitle">
+    <div class="sources-drawer-header">
+      <div class="sources-drawer-copy">
+        <span class="sources-drawer-kicker">Source summaries</span>
+        <h2 class="sources-drawer-title" id="sourcesDrawerTitle">Search results</h2>
+        <p class="sources-drawer-meta" id="sourcesDrawerMeta">Open a sources pill to inspect the retrieved summaries.</p>
+      </div>
+      <button class="sources-drawer-close" id="sourcesDrawerClose" type="button" aria-label="Close source summaries" title="Close">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 3L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M13 3L3 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="sources-drawer-body" id="sourcesDrawerBody"></div>
+  </aside>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
@@ -163,12 +180,9 @@ const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
 const BOTTOM_STICKY_THRESHOLD = 120;
 const PANEL_TRANSITION_MS = 320;
-const SOURCES_PANEL_TRANSITION_MS = 420;
-const SOURCES_WIDTH_COLLAPSE_MS = 380;
 const WELCOME_REENTRY_DURATION_MS = 980;
 const DEMO_SWAP_DURATION_MS = 220;
 const SCROLLBAR_IDLE_DELAY_MS = 760;
-let sourcesDisclosureId = 0;
 const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
 const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
 const SUBJECTS_STORAGE_KEY = 'smartTutor.selectedSubjects.v1';
@@ -184,6 +198,8 @@ let demoRotateButtonTimer = null;
 let demoDeckSwapTimer = null;
 let demoTargetDeckIndex = 0;
 let scrollActivityTimer = null;
+let activeSourcesPanel = null;
+let activeSourcesTrigger = null;
 
 const appShell = document.querySelector('.app-shell');
 const chatArea = document.getElementById('chatArea');
@@ -205,6 +221,11 @@ const subjectsDropdown = document.getElementById('subjectsDropdown');
 const subjectsTrigger = document.getElementById('subjectsTrigger');
 const subjectsTriggerValue = document.getElementById('subjectsTriggerValue');
 const subjectsMenuList = document.getElementById('subjectsMenuList');
+const sourcesDrawer = document.getElementById('sourcesDrawer');
+const sourcesDrawerBackdrop = document.getElementById('sourcesDrawerBackdrop');
+const sourcesDrawerClose = document.getElementById('sourcesDrawerClose');
+const sourcesDrawerBody = document.getElementById('sourcesDrawerBody');
+const sourcesDrawerMeta = document.getElementById('sourcesDrawerMeta');
 
 const DEMO_SUBJECT_LABELS = {
   "math": "Math",
@@ -985,6 +1006,124 @@ function getSourceHostname(url) {
   }
 }
 
+function getSourceFaviconUrl(source) {
+  const hostname = getSourceHostname(source?.url || '') || source?.provider || 'source';
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
+}
+
+function formatSourceCount(count, noun = 'webpage') {
+  const total = Number(count) || 0;
+  return `${total} ${noun}${total === 1 ? '' : 's'}`;
+}
+
+function resetActiveSourceTrigger() {
+  if (!activeSourcesTrigger) return;
+  activeSourcesTrigger.classList.remove('is-active');
+  activeSourcesTrigger.setAttribute('aria-expanded', 'false');
+  activeSourcesPanel = null;
+  activeSourcesTrigger = null;
+}
+
+function closeSourcesDrawer({ returnFocus = false } = {}) {
+  if (!appShell || !sourcesDrawer) return;
+
+  const triggerToFocus = returnFocus ? activeSourcesTrigger : null;
+  appShell.classList.remove('has-sources-drawer');
+  sourcesDrawer.classList.remove('is-open');
+  sourcesDrawer.setAttribute('aria-hidden', 'true');
+
+  if (sourcesDrawerBackdrop) {
+    sourcesDrawerBackdrop.classList.remove('is-visible');
+    window.setTimeout(() => {
+      if (!appShell.classList.contains('has-sources-drawer')) {
+        sourcesDrawerBackdrop.hidden = true;
+      }
+    }, 320);
+  }
+
+  resetActiveSourceTrigger();
+
+  if (triggerToFocus) {
+    triggerToFocus.focus();
+  }
+}
+
+function renderSourcesDrawer(sources) {
+  if (!sourcesDrawerBody || !sourcesDrawerMeta) return;
+
+  const items = Array.isArray(sources) ? sources.filter(source => source && (source.title || source.url || source.snippet)) : [];
+  if (!items.length) {
+    sourcesDrawerMeta.textContent = 'No source summaries are available for this answer.';
+    sourcesDrawerBody.innerHTML = `
+      <div class="sources-drawer-empty">
+        <p>No source summaries are available for this answer yet.</p>
+      </div>
+    `;
+    return;
+  }
+
+  sourcesDrawerMeta.textContent = `${formatSourceCount(items.length, 'result')} · snippets shown in retrieval order.`;
+  sourcesDrawerBody.innerHTML = `
+    <ol class="sources-drawer-list">
+      ${items.map((source, index) => {
+        const hostname = getSourceHostname(source.url || '') || source.provider || 'Source';
+        return `
+          <li class="sources-drawer-item" style="--source-index:${index}">
+            <a class="sources-drawer-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
+              <span class="sources-drawer-link-top">
+                <span class="sources-drawer-link-site">
+                  <span class="sources-drawer-link-index">${index + 1}</span>
+                  <span class="sources-drawer-link-favicon" aria-hidden="true">
+                    <img src="${getSourceFaviconUrl(source)}" alt="" loading="lazy" referrerpolicy="no-referrer">
+                  </span>
+                  <span class="sources-drawer-link-provider">${escapeHtml(source.provider || hostname)}</span>
+                  <span class="sources-drawer-link-domain">${escapeHtml(hostname)}</span>
+                </span>
+                <span class="sources-drawer-link-arrow" aria-hidden="true">↗</span>
+              </span>
+              <strong class="sources-drawer-link-title">${escapeHtml(source.title || source.url || 'Source')}</strong>
+              <p class="sources-drawer-link-snippet">${escapeHtml(source.snippet || 'No summary available for this result.')}</p>
+            </a>
+          </li>
+        `;
+      }).join('')}
+    </ol>
+  `;
+}
+
+function openSourcesDrawer(panel, trigger, sources) {
+  if (!appShell || !sourcesDrawer || !trigger) return;
+
+  if (activeSourcesTrigger && activeSourcesTrigger !== trigger) {
+    resetActiveSourceTrigger();
+  }
+
+  activeSourcesPanel = panel;
+  activeSourcesTrigger = trigger;
+  activeSourcesTrigger.classList.add('is-active');
+  activeSourcesTrigger.setAttribute('aria-expanded', 'true');
+
+  renderSourcesDrawer(sources);
+
+  if (sourcesDrawerBackdrop) {
+    sourcesDrawerBackdrop.hidden = false;
+    requestAnimationFrame(() => sourcesDrawerBackdrop.classList.add('is-visible'));
+  }
+
+  appShell.classList.add('has-sources-drawer');
+  sourcesDrawer.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => sourcesDrawer.classList.add('is-open'));
+}
+
+function toggleSourcesDrawer(panel, trigger, sources) {
+  const isSameTrigger = activeSourcesTrigger === trigger && appShell?.classList.contains('has-sources-drawer');
+  if (isSameTrigger) {
+    closeSourcesDrawer({ returnFocus: true });
+    return;
+  }
+  openSourcesDrawer(panel, trigger, sources);
+}
+
 function normalizeSubjects(subjects) {
   const requested = new Set(
     Array.isArray(subjects)
@@ -1224,25 +1363,27 @@ function createMessageActions(role, getCopyText) {
   copyButton.title = 'Copy message';
   copyButton.innerHTML = `
     <span class="msg-action-icon" aria-hidden="true">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <rect x="5.25" y="3.25" width="7.5" height="9.5" rx="2" stroke="currentColor" stroke-width="1.25"/>
         <path d="M3.75 10.25C2.92157 10.25 2.25 9.57843 2.25 8.75V4.75C2.25 3.92157 2.92157 3.25 3.75 3.25H7.25" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
       </svg>
     </span>
-    <span class="msg-action-label">Copy</span>
+    <span class="msg-action-label sr-only">Copy</span>
   `;
 
   copyButton.addEventListener('click', async () => {
     const text = typeof getCopyText === 'function' ? getCopyText() : '';
     const didCopy = await copyText(text);
-    const label = copyButton.querySelector('.msg-action-label');
-    if (!label) return;
-    label.textContent = didCopy ? 'Copied' : 'Copy failed';
+    copyButton.dataset.feedback = didCopy ? 'Copied' : 'Copy failed';
+    copyButton.title = didCopy ? 'Copied' : 'Copy failed';
     copyButton.classList.toggle('is-copied', didCopy);
+    copyButton.classList.toggle('is-failed', !didCopy);
     window.clearTimeout(copyButton._copyTimer);
     copyButton._copyTimer = window.setTimeout(() => {
-      label.textContent = 'Copy';
       copyButton.classList.remove('is-copied');
+      copyButton.classList.remove('is-failed');
+      copyButton.dataset.feedback = '';
+      copyButton.title = 'Copy message';
     }, 1600);
   });
 
@@ -1795,14 +1936,17 @@ function createStreamingMessage(userMessage = '', messageSubjects = ALLOWED_SUBJ
   const sourcesPanel = document.createElement('div');
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
+  const metaRow = document.createElement('div');
+  metaRow.className = 'message-meta-row';
 
   shell.appendChild(inlinePending);
   shell.appendChild(content);
   bubble.appendChild(shell);
 
+  metaRow.appendChild(sourcesPanel);
+  metaRow.appendChild(actions);
   card.appendChild(bubble);
-  card.appendChild(actions);
-  card.appendChild(sourcesPanel);
+  card.appendChild(metaRow);
   card.appendChild(followupsPanel);
   row.appendChild(card);
   messageList.appendChild(row);
@@ -1884,6 +2028,8 @@ function createStrictMessage(userMessage = '', messageSubjects = ALLOWED_SUBJECT
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
   const followupsPanel = createFollowUpPanel();
+  const metaRow = document.createElement('div');
+  metaRow.className = 'message-meta-row';
 
   const { actions, copyButton } = createMessageActions('bot', () => finalContent.dataset.rawText || '');
   actions.classList.add('is-hidden');
@@ -1894,9 +2040,10 @@ function createStrictMessage(userMessage = '', messageSubjects = ALLOWED_SUBJECT
   strictWrap.appendChild(cards);
   strictWrap.appendChild(finalAnswer);
   bubble.appendChild(strictWrap);
+  metaRow.appendChild(sourcesPanel);
+  metaRow.appendChild(actions);
   card.appendChild(bubble);
-  card.appendChild(actions);
-  card.appendChild(sourcesPanel);
+  card.appendChild(metaRow);
   card.appendChild(followupsPanel);
   row.appendChild(card);
   messageList.appendChild(row);
@@ -2050,328 +2197,44 @@ function renderFinalAnswer(container, text) {
   }
 }
 
-function animateSourcesBody(body, expand, onComplete) {
-  if (!body) return;
-
-  if (body._sourcesAnimationFrame) {
-    cancelAnimationFrame(body._sourcesAnimationFrame);
-    body._sourcesAnimationFrame = null;
-  }
-
-  if (body._sourcesTransitionHandler) {
-    body.removeEventListener('transitionend', body._sourcesTransitionHandler);
-    body._sourcesTransitionHandler = null;
-  }
-
-  body.style.overflow = 'hidden';
-  body.style.willChange = 'height, opacity, transform';
-  body.style.setProperty('--sources-body-duration', `${SOURCES_PANEL_TRANSITION_MS}ms`);
-  body.hidden = false;
-
-  const queueFrame = callback => {
-    body._sourcesAnimationFrame = requestAnimationFrame(() => {
-      body._sourcesAnimationFrame = requestAnimationFrame(callback);
-    });
-  };
-
-  if (expand) {
-    body.classList.add('is-animating');
-    const startHeight = body.hidden ? 0 : body.getBoundingClientRect().height;
-    body.style.height = `${startHeight}px`;
-    body.style.opacity = startHeight > 0 ? '1' : '0';
-    body.style.transform = startHeight > 0 ? 'translateY(0)' : 'translateY(-4px)';
-    void body.offsetHeight;
-
-    const endHeight = body.scrollHeight;
-    queueFrame(() => {
-      body.style.height = `${endHeight}px`;
-      body.style.opacity = '1';
-      body.style.transform = 'translateY(0)';
-    });
-  } else {
-    body.classList.add('is-animating');
-    const startHeight = body.getBoundingClientRect().height || body.scrollHeight;
-    body.style.height = `${startHeight}px`;
-    body.style.opacity = '1';
-    body.style.transform = 'translateY(0)';
-    void body.offsetHeight;
-
-    queueFrame(() => {
-      body.style.height = '0px';
-      body.style.opacity = '0';
-      body.style.transform = 'translateY(-3px)';
-    });
-  }
-
-  const onEnd = event => {
-    if (event.propertyName !== 'height') return;
-    body.removeEventListener('transitionend', onEnd);
-    body._sourcesTransitionHandler = null;
-    body._sourcesAnimationFrame = null;
-    body.style.willChange = '';
-    body.classList.remove('is-animating');
-    if (expand) {
-      body.style.height = 'auto';
-    } else {
-      body.hidden = true;
-      body.style.height = '0px';
-    }
-    if (typeof onComplete === 'function') {
-      onComplete();
-    }
-  };
-
-  body._sourcesTransitionHandler = onEnd;
-  body.addEventListener('transitionend', onEnd);
-}
-
-
-function measureCollapsedDisclosureWidth(panel, summary) {
-  if (!panel || !summary) return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
-
-  const disclosure = panel.querySelector('.message-sources-disclosure');
-  if (!disclosure) {
-    return Math.ceil(summary.getBoundingClientRect().width || summary.scrollWidth || 0);
-  }
-
-  const clone = disclosure.cloneNode(false);
-  clone.className = 'message-sources-disclosure';
-  clone.style.position = 'absolute';
-  clone.style.visibility = 'hidden';
-  clone.style.pointerEvents = 'none';
-  clone.style.width = 'auto';
-  clone.style.minWidth = '0';
-  clone.style.maxWidth = 'none';
-  clone.style.borderRadius = '999px';
-  clone.style.transform = 'none';
-  clone.style.transition = 'none';
-
-  const summaryClone = summary.cloneNode(true);
-  summaryClone.style.width = 'auto';
-  summaryClone.style.padding = '';
-  clone.appendChild(summaryClone);
-  panel.appendChild(clone);
-
-  const width = Math.ceil(clone.getBoundingClientRect().width || summaryClone.getBoundingClientRect().width || summary.scrollWidth || 0);
-  clone.remove();
-  return width;
-}
-
-function animateSourcesDisclosureCollapse(panel, summary) {
-  if (!panel || !summary) return;
-  const disclosure = panel.querySelector('.message-sources-disclosure');
-  if (!disclosure) {
-    panel.classList.remove('is-open', 'is-collapsing');
-    return;
-  }
-
-  if (disclosure._widthAnimation) {
-    disclosure._widthAnimation.cancel();
-    disclosure._widthAnimation = null;
-  }
-
-  if (disclosure._widthAnimationFrame) {
-    cancelAnimationFrame(disclosure._widthAnimationFrame);
-    disclosure._widthAnimationFrame = null;
-  }
-
-  const currentWidth = Math.ceil(disclosure.getBoundingClientRect().width);
-  const targetWidth = measureCollapsedDisclosureWidth(panel, summary);
-
-  panel.classList.remove('is-open');
-  panel.classList.add('is-collapsing');
-
-  disclosure.style.width = `${currentWidth}px`;
-  disclosure.style.minWidth = `${currentWidth}px`;
-  disclosure.style.maxWidth = `${currentWidth}px`;
-  void disclosure.offsetWidth;
-
-  const cleanup = () => {
-    if (disclosure._widthAnimation) {
-      try {
-        disclosure._widthAnimation.cancel();
-      } catch (_) {}
-      disclosure._widthAnimation = null;
-    }
-    disclosure._widthAnimationFrame = null;
-    disclosure.style.width = '';
-    disclosure.style.minWidth = '';
-    disclosure.style.maxWidth = '';
-    panel.classList.remove('is-collapsing');
-  };
-
-  if (Math.abs(currentWidth - targetWidth) < 2) {
-    cleanup();
-    return;
-  }
-
-  if (typeof disclosure.animate === 'function') {
-    const animation = disclosure.animate(
-      [
-        { width: `${currentWidth}px`, minWidth: `${currentWidth}px`, maxWidth: `${currentWidth}px` },
-        { width: `${targetWidth}px`, minWidth: `${targetWidth}px`, maxWidth: `${targetWidth}px` },
-      ],
-      {
-        duration: SOURCES_WIDTH_COLLAPSE_MS,
-        delay: 110,
-        easing: 'cubic-bezier(.22,1,.36,1)',
-        fill: 'forwards',
-      }
-    );
-    disclosure._widthAnimation = animation;
-    animation.onfinish = cleanup;
-    animation.oncancel = cleanup;
-    return;
-  }
-
-  disclosure._widthAnimationFrame = requestAnimationFrame(() => {
-    disclosure.style.transition = `width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), min-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1), max-width ${SOURCES_WIDTH_COLLAPSE_MS}ms cubic-bezier(.22,1,.36,1)`;
-    disclosure.style.width = `${targetWidth}px`;
-    disclosure.style.minWidth = `${targetWidth}px`;
-    disclosure.style.maxWidth = `${targetWidth}px`;
-
-    const onWidthEnd = event => {
-      if (event.propertyName !== 'width') return;
-      disclosure.removeEventListener('transitionend', onWidthEnd);
-      disclosure.style.transition = '';
-      cleanup();
-    };
-
-    disclosure.addEventListener('transitionend', onWidthEnd);
-  });
-}
-
-function setupSourcesPanel(panel) {
-  if (!panel) return;
-
-  const summary = panel.querySelector('.message-sources-summary');
-  const body = panel.querySelector('.message-sources-body');
-  const moreButton = panel.querySelector('.message-sources-more');
-
-  const resetExtraSources = () => {
-    panel.querySelectorAll('.message-source-item.is-extra').forEach(item => {
-      item.hidden = true;
-      item.classList.remove('is-revealed');
-    });
-    if (moreButton) {
-      moreButton.hidden = false;
-      moreButton.textContent = 'More content';
-    }
-  };
-
-  if (summary && body) {
-    summary.addEventListener('click', () => {
-      const expand = summary.getAttribute('aria-expanded') !== 'true';
-      summary.setAttribute('aria-expanded', expand ? 'true' : 'false');
-
-      if (expand) {
-        panel.classList.remove('is-collapsing');
-        const disclosure = panel.querySelector('.message-sources-disclosure');
-        if (disclosure) {
-          if (disclosure._widthAnimation) {
-            try {
-              disclosure._widthAnimation.cancel();
-            } catch (_) {}
-            disclosure._widthAnimation = null;
-          }
-          if (disclosure._widthAnimationFrame) {
-            cancelAnimationFrame(disclosure._widthAnimationFrame);
-            disclosure._widthAnimationFrame = null;
-          }
-          disclosure.style.width = '';
-          disclosure.style.minWidth = '';
-          disclosure.style.maxWidth = '';
-        }
-        panel.classList.add('is-open');
-        animateSourcesBody(body, true);
-        return;
-      }
-
-      animateSourcesBody(body, false, () => animateSourcesDisclosureCollapse(panel, summary));
-      resetExtraSources();
-    });
-  }
-
-  if (moreButton) {
-    moreButton.addEventListener('click', () => {
-      panel.querySelectorAll('.message-source-item.is-extra').forEach((item, index) => {
-        item.hidden = false;
-        requestAnimationFrame(() => {
-          item.classList.add('is-revealed');
-          item.style.setProperty('--source-index', String(index + 4));
-        });
-      });
-      moreButton.hidden = true;
-    });
-  }
-}
-
 function renderSourcesPanel(panel, sources) {
   if (!panel) return;
-  if (!Array.isArray(sources) || sources.length === 0) {
-    panel.classList.remove('is-visible', 'is-open');
+
+  const items = Array.isArray(sources) ? sources.filter(source => source && (source.title || source.url || source.snippet)) : [];
+  if (!items.length) {
+    if (activeSourcesPanel === panel) {
+      closeSourcesDrawer();
+    }
+    panel.classList.remove('is-visible');
     panel.setAttribute('aria-hidden', 'true');
     panel.innerHTML = '';
     return;
   }
 
-  const bodyId = `sources-body-${++sourcesDisclosureId}`;
-  const previewCount = 3;
+  const isActive = activeSourcesPanel === panel && appShell?.classList.contains('has-sources-drawer');
 
-  const renderSourceItem = (source, index) => {
-    const hostname = getSourceHostname(source.url || '') || source.provider || 'Source';
-    const isExtra = index >= previewCount;
-    return `
-      <li class="message-source-item${isExtra ? ' is-extra' : ''}" ${isExtra ? 'hidden' : ''} style="--source-index:${index + 1}">
-        <a class="message-source-link" href="${escapeHtml(source.url || '#')}" target="_blank" rel="noreferrer noopener">
-          <span class="message-source-topline">
-            <span class="message-source-site">
-              <span class="message-source-favicon-wrap" aria-hidden="true">
-                <img
-                  class="message-source-favicon"
-                  src="https://www.google.com/s2/favicons?domain=${escapeHtml(hostname)}&sz=64"
-                  alt=""
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
-                >
-              </span>
-              <span class="message-source-domain">${escapeHtml(hostname)}</span>
-            </span>
-            <span class="message-source-arrow" aria-hidden="true">↗</span>
-          </span>
-          <span class="message-source-title">${escapeHtml(source.title || source.url || 'Source')}</span>
-          ${source.snippet ? `<span class="message-source-snippet">${escapeHtml(source.snippet)}</span>` : ''}
-        </a>
-      </li>
-    `;
-  };
-
-  const sourceDetails = sources.map((source, index) => renderSourceItem(source, index)).join('');
-  const moreButton = sources.length > previewCount
-    ? '<button class="message-sources-more" type="button">More content</button>'
-    : '';
-
-  panel.classList.remove('is-visible', 'is-open');
+  panel.classList.remove('is-visible');
   panel.innerHTML = `
-    <div class="message-sources-disclosure">
-      <button class="message-sources-summary" type="button" aria-expanded="false" aria-controls="${bodyId}">
-        <span class="message-sources-summary-copy">
-          <span class="message-sources-label">Sources</span>
-          <span class="message-sources-count">${sources.length}</span>
-        </span>
-        <span class="message-sources-caret" aria-hidden="true"></span>
-      </button>
-      <div class="message-sources-body" id="${bodyId}" hidden>
-        <ul class="message-sources-list">${sourceDetails}</ul>
-        ${moreButton}
-      </div>
-    </div>
+    <button class="message-sources-trigger${isActive ? ' is-active' : ''}" type="button" aria-expanded="${isActive ? 'true' : 'false'}" aria-haspopup="dialog">
+      <span class="message-sources-trigger-copy">
+        <span class="message-sources-trigger-label">Sources</span>
+        <span class="message-sources-trigger-count-badge">${items.length}</span>
+      </span>
+    </button>
   `;
-  setupSourcesPanel(panel);
+  const trigger = panel.querySelector('.message-sources-trigger');
+  if (trigger) {
+    trigger.addEventListener('click', () => toggleSourcesDrawer(panel, trigger, items));
+  }
   panel.setAttribute('aria-hidden', 'false');
   requestAnimationFrame(() => {
     panel.classList.add('is-visible');
   });
+
+  if (isActive) {
+    activeSourcesTrigger = trigger;
+    renderSourcesDrawer(items);
+  }
 }
 
 function animateStrictFinalAnswer(strictState, text, sources) {
@@ -2880,6 +2743,7 @@ async function clearChat() {
     activeRequestController.abort();
   }
   await fetch('/api/clear', { method: 'POST' });
+  closeSourcesDrawer();
   messageList.innerHTML = '';
   activeStreamController = null;
   pendingSubjectNotice = null;
@@ -2947,6 +2811,28 @@ updateSubjectsTriggerValue();
 document.addEventListener('click', event => {
   if (!event.target.closest('.toolbar-dropdown')) {
     closeAllDropdowns();
+  }
+
+  if (
+    appShell?.classList.contains('has-sources-drawer') &&
+    !event.target.closest('.sources-drawer') &&
+    !event.target.closest('.message-sources-trigger')
+  ) {
+    closeSourcesDrawer();
+  }
+});
+
+if (sourcesDrawerClose) {
+  sourcesDrawerClose.addEventListener('click', () => closeSourcesDrawer({ returnFocus: true }));
+}
+
+if (sourcesDrawerBackdrop) {
+  sourcesDrawerBackdrop.addEventListener('click', () => closeSourcesDrawer({ returnFocus: true }));
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && appShell?.classList.contains('has-sources-drawer')) {
+    closeSourcesDrawer({ returnFocus: true });
   }
 });
 
