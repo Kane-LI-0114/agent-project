@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Literal
@@ -253,8 +253,8 @@ async def demos():
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    """Avoid browser default favicon 404 noise in logs."""
-    return Response(status_code=204)
+    """Serve the tab icon from the static asset path expected by browsers."""
+    return RedirectResponse(url="/static/favicon.svg", status_code=307)
 
 
 # --------------------------------------------------------------------------- #
