@@ -4,7 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SmartTutor - CSIT5900</title>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="shortcut icon" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
+<meta name="theme-color" content="#0b0b0d">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1217,6 +1220,8 @@ function createMessageActions(role, getCopyText) {
   const copyButton = document.createElement('button');
   copyButton.type = 'button';
   copyButton.className = 'msg-action-btn';
+  copyButton.setAttribute('aria-label', 'Copy message');
+  copyButton.title = 'Copy message';
   copyButton.innerHTML = `
     <span class="msg-action-icon" aria-hidden="true">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
