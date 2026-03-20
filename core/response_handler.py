@@ -21,13 +21,16 @@ from typing import Any, AsyncGenerator, Literal, Optional
 
 from config.settings import (
     STRICT_AUDITOR_TIMEOUT_SECONDS,
-    STRICT_GENERATOR_PROMPT,
     STRICT_GENERATOR_TIMEOUT_SECONDS,
-    STRICT_INPUT_REVIEW_PROMPT,
     STRICT_MAX_GENERATION_ATTEMPTS,
-    STRICT_OUTPUT_AUDIT_PROMPT,
     STRICT_REFUSAL_MESSAGE,
     STRICT_REVIEWER_TIMEOUT_SECONDS,
+    build_subject_change_note,
+    build_strict_generator_prompt,
+    build_strict_input_review_prompt,
+    build_strict_output_audit_prompt,
+    build_system_prompt,
+    normalize_subject_selection,
 )
 from core.conversation import ConversationManager
 from core.guardrails import (
@@ -93,18 +96,33 @@ class ResponseHandler:
         user_input: str,
         search_mode: SearchMode = "auto",
         mode: ChatMode = "normal",
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> ResponsePayload:
         """Process *user_input* and return the final response payload."""
         if mode == "strict":
-            return await self._handle_strict(user_input, search_mode)
-        return await self._handle_normal(user_input, search_mode)
+            return await self._handle_strict(
+                user_input,
+                search_mode,
+                selected_subjects=selected_subjects,
+                subject_change_note=subject_change_note,
+            )
+        return await self._handle_normal(
+            user_input,
+            search_mode,
+            selected_subjects=selected_subjects,
+            subject_change_note=subject_change_note,
+        )
 
     async def _handle_normal(
         self,
         user_input: str,
         search_mode: SearchMode = "auto",
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> ResponsePayload:
-        prefilter = prefilter_input(user_input)
+        subjects = self._normalize_subjects(selected_subjects)
+        prefilter = prefilter_input(user_input, allowed_subjects=subjects)
         if not prefilter.allowed:
             self._conv.add_user_message(user_input)
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
@@ -136,7 +154,11 @@ class ResponseHandler:
 
         self._conv.add_user_message(prefilter.normalized_input)
         search_result = await self._search.maybe_search(prefilter.normalized_input, search_mode)
-        messages = self._build_messages(search_result)
+        messages = self._build_messages(
+            search_result,
+            selected_subjects=subjects,
+            subject_change_note=subject_change_note,
+        )
 
         try:
             reply = await self._llm.chat(messages)
@@ -155,7 +177,10 @@ class ResponseHandler:
         self,
         user_input: str,
         search_mode: SearchMode = "auto",
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> ResponsePayload:
+        subjects = self._normalize_subjects(selected_subjects)
         trace = [
             StrictTraceStage(
                 key="input_review",
@@ -180,7 +205,7 @@ class ResponseHandler:
             ),
         ]
 
-        prefilter = prefilter_input(user_input)
+        prefilter = prefilter_input(user_input, allowed_subjects=subjects)
         normalized_input = prefilter.normalized_input or user_input.strip()
         if not prefilter.allowed:
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
@@ -278,7 +303,7 @@ class ResponseHandler:
 
         reviewer_response = await self._run_json_stage(
             client=self._strict_reviewer or self._llm,
-            messages=self._build_strict_reviewer_messages(normalized_input),
+            messages=self._build_strict_reviewer_messages(normalized_input, subjects),
             timeout_seconds=STRICT_REVIEWER_TIMEOUT_SECONDS,
             fallback={
                 "decision": "refuse",
@@ -333,6 +358,8 @@ class ResponseHandler:
         for attempt in range(1, STRICT_MAX_GENERATION_ATTEMPTS + 1):
             generator_messages = self._build_strict_generator_messages(
                 search_result=search_result,
+                selected_subjects=subjects,
+                subject_change_note=subject_change_note,
                 previous_attempt_feedback=last_feedback,
             )
             generator_response = await self._run_text_stage(
@@ -397,6 +424,7 @@ class ResponseHandler:
                 normalized_input=normalized_input,
                 candidate_reply=candidate_reply,
                 search_sources=search_sources,
+                selected_subjects=subjects,
             )
             total_audit_ms += auditor_response.get("_duration_ms", 0)
             last_auditor_response = auditor_response
@@ -465,8 +493,11 @@ class ResponseHandler:
         self,
         user_input: str,
         search_mode: SearchMode = "auto",
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream strict-mode stage updates so the UI can show progress live."""
+        subjects = self._normalize_subjects(selected_subjects)
         trace = [
             StrictTraceStage(
                 key="input_review",
@@ -492,7 +523,7 @@ class ResponseHandler:
         ]
         yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
 
-        prefilter = prefilter_input(user_input)
+        prefilter = prefilter_input(user_input, allowed_subjects=subjects)
         normalized_input = prefilter.normalized_input or user_input.strip()
         if not prefilter.allowed:
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
@@ -586,7 +617,7 @@ class ResponseHandler:
 
         reviewer_response = await self._run_json_stage(
             client=self._strict_reviewer or self._llm,
-            messages=self._build_strict_reviewer_messages(normalized_input),
+            messages=self._build_strict_reviewer_messages(normalized_input, subjects),
             timeout_seconds=STRICT_REVIEWER_TIMEOUT_SECONDS,
             fallback={
                 "decision": "refuse",
@@ -672,6 +703,8 @@ class ResponseHandler:
 
             generator_messages = self._build_strict_generator_messages(
                 search_result=search_result,
+                selected_subjects=subjects,
+                subject_change_note=subject_change_note,
                 previous_attempt_feedback=last_feedback,
             )
             generator_started = time.perf_counter()
@@ -741,6 +774,7 @@ class ResponseHandler:
                 normalized_input=normalized_input,
                 candidate_reply=candidate_reply,
                 search_sources=search_sources,
+                selected_subjects=subjects,
             )
             last_auditor_response = auditor_response
             total_audit_ms += auditor_response.get("_duration_ms", 0)
@@ -807,9 +841,12 @@ class ResponseHandler:
         self,
         user_input: str,
         search_mode: SearchMode = "auto",
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> AsyncGenerator[dict[str, object], None]:
         """Stream normal-mode replies chunk by chunk."""
-        prefilter = prefilter_input(user_input)
+        subjects = self._normalize_subjects(selected_subjects)
+        prefilter = prefilter_input(user_input, allowed_subjects=subjects)
         if not prefilter.allowed:
             self._conv.add_user_message(user_input)
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
@@ -865,7 +902,11 @@ class ResponseHandler:
                 "type": "search_end",
                 "sources": search_result.to_dict_list() if search_result else [],
             }
-        messages = self._build_messages(search_result)
+        messages = self._build_messages(
+            search_result,
+            selected_subjects=subjects,
+            subject_change_note=subject_change_note,
+        )
 
         full_reply = ""
         try:
@@ -885,9 +926,20 @@ class ResponseHandler:
         self,
         search_result: SearchResult | None,
         system_override: Optional[str] = None,
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
     ) -> list[dict[str, str]]:
         """Insert optional search context and optionally replace the system prompt."""
-        messages = self._conv.get_messages()
+        subjects = self._normalize_subjects(selected_subjects)
+        system_notes = (
+            [build_subject_change_note(subjects)]
+            if subject_change_note and subject_change_note.strip()
+            else None
+        )
+        messages = self._conv.get_messages(
+            system_prompt_override=build_system_prompt(subjects),
+            system_notes=system_notes,
+        )
         if system_override and messages:
             messages = [
                 dict(messages[0], content=f"{system_override}\n\n{messages[0]['content']}")
@@ -903,10 +955,17 @@ class ResponseHandler:
     def _build_strict_generator_messages(
         self,
         search_result: SearchResult | None,
+        selected_subjects: list[str] | None = None,
+        subject_change_note: str | None = None,
         previous_attempt_feedback: Optional[dict[str, str]] = None,
     ) -> list[dict[str, str]]:
         """Build generator messages, optionally including prior audit failure feedback."""
-        messages = self._build_messages(search_result, system_override=STRICT_GENERATOR_PROMPT)
+        messages = self._build_messages(
+            search_result,
+            system_override=build_strict_generator_prompt(self._normalize_subjects(selected_subjects)),
+            selected_subjects=selected_subjects,
+            subject_change_note=subject_change_note,
+        )
         if not previous_attempt_feedback:
             return messages
 
@@ -929,10 +988,11 @@ class ResponseHandler:
     def _build_strict_reviewer_messages(
         self,
         normalized_input: str,
+        selected_subjects: list[str] | None = None,
     ) -> list[dict[str, str]]:
         """Build reviewer messages with limited visible conversation context."""
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": STRICT_INPUT_REVIEW_PROMPT}
+            {"role": "system", "content": build_strict_input_review_prompt(self._normalize_subjects(selected_subjects))}
         ]
         history_context = self._get_recent_history_for_review()
         if history_context:
@@ -987,6 +1047,7 @@ class ResponseHandler:
         normalized_input: str,
         candidate_reply: str,
         search_sources: list[dict[str, str]],
+        selected_subjects: list[str] | None = None,
     ) -> dict[str, Any]:
         """Run the strict final audit for a candidate answer."""
         audit_payload = {
@@ -997,7 +1058,7 @@ class ResponseHandler:
         return await self._run_json_stage(
             client=self._strict_auditor or self._llm,
             messages=[
-                {"role": "system", "content": STRICT_OUTPUT_AUDIT_PROMPT},
+                {"role": "system", "content": build_strict_output_audit_prompt(self._normalize_subjects(selected_subjects))},
                 {
                     "role": "user",
                     "content": json.dumps(audit_payload, ensure_ascii=False),
@@ -1011,6 +1072,10 @@ class ResponseHandler:
                 "approved": False,
             },
         )
+
+    def _normalize_subjects(self, selected_subjects: list[str] | None) -> list[str]:
+        """Return the canonical subject scope for the current request."""
+        return normalize_subject_selection(selected_subjects)
 
     async def _run_text_stage(
         self,
