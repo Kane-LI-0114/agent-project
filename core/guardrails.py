@@ -28,6 +28,19 @@ from config.settings import STRICT_REFUSAL_MESSAGE
 
 logger = logging.getLogger(__name__)
 
+_LEETSPEAK_TRANSLATION = str.maketrans(
+    {
+        "0": "o",
+        "1": "i",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+        "@": "a",
+        "$": "s",
+    }
+)
+
 _MORSE_TABLE = {
     ".-": "A",
     "-...": "B",
@@ -177,6 +190,13 @@ _META_PATTERNS: List[str] = [
     r"\byear\s*\d+\b.*\bstudent\b",
     r"\bacademic\s*level\b",
     r"\bprovide\s+your\s+answers\s+accordingly\b",
+]
+
+_CONVERSATION_SUMMARY_PATTERNS: List[str] = [
+    r"\bsummar(?:ize|ise)\b.*\b(conversation|chat|dialog|discussion)\b",
+    r"\b(conversation|chat|dialog|discussion)\b.*\bsummar(?:ize|ise)\b",
+    r"\bwhat\s+have\s+we\s+discussed\b",
+    r"\brecap\b.*\b(conversation|chat|discussion)\b",
 ]
 
 _ALLOWED_SUBJECT_PATTERNS: List[str] = [
@@ -403,7 +423,34 @@ def _find_rule_matches(text: str) -> list[str]:
     for label, pattern in _JAILBREAK_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             matches.append(label)
+    compact = _compact_obfuscated_text(text)
+    compact_signatures = {
+        "jailbreak": [
+            "ignorepreviousinstructions",
+            "systemprompt",
+            "hiddenrules",
+            "internalinstructions",
+            "systeminstructions",
+            "privatepolicy",
+            "debugmode",
+        ],
+        "harmful": [
+            "howtomakebomb",
+            "makebomb",
+            "buildbomb",
+            "explosiveinstructions",
+        ],
+    }
+    for label, signatures in compact_signatures.items():
+        if any(signature in compact for signature in signatures):
+            matches.append(label)
     return sorted(set(matches))
+
+
+def _compact_obfuscated_text(text: str) -> str:
+    """Collapse spaces/punctuation and normalize common leetspeak for rule matching."""
+    cleaned = unicodedata.normalize("NFKC", text).translate(_LEETSPEAK_TRANSLATION)
+    return re.sub(r"[^a-z0-9]+", "", cleaned.lower())
 
 
 def _looks_homework_like(text: str) -> bool:
@@ -433,6 +480,25 @@ def _looks_like_org_trivia_query(text: str) -> bool:
         _matches_any(text, [r"\bceo\b", r"\bcfo\b", r"\bcto\b", r"\bcoo\b"])
         and _matches_any(text, [r"\bfirst\b", r"\bfound(?:er|ed|ing)\b", r"\bwho was\b", r"\blist\b"])
     )
+
+
+def is_conversation_summary_request(text: str) -> bool:
+    """Return True when the user is asking for a summary of the visible dialog."""
+    normalized_text, _ = _normalize_input(text)
+    return _matches_any(normalized_text, _CONVERSATION_SUMMARY_PATTERNS)
+
+
+def is_academic_level_statement(text: str) -> bool:
+    """Return True when the input primarily declares the user's academic level."""
+    normalized_text, _ = _normalize_input(text)
+    if not detect_academic_level(normalized_text):
+        return False
+    statement_patterns = [
+        r"^\s*i(?:'m| am)\s+.*student\.?\s*$",
+        r"^\s*i(?:'m| am)\s+.*student,?\s*provide\s+your\s+answers\s+accordingly\.?\s*$",
+        r"^\s*year\s*\d+.*student\.?\s*$",
+    ]
+    return any(re.search(pattern, normalized_text, re.IGNORECASE) for pattern in statement_patterns)
 
 
 def prefilter_input(user_input: str) -> InputGuardResult:

@@ -176,3 +176,132 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("French Revolution", first.reply)
         self.assertIn("Sorry", second.reply)
         self.assertEqual(len(reviewer.chat_calls), 1)
+
+    async def test_strict_mode_accepts_academic_level_statement(self) -> None:
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=ConversationManager(),
+            strict_reviewer=ScriptedLLMClient(),
+            strict_generator=ScriptedLLMClient(),
+            strict_auditor=ScriptedLLMClient(),
+        )
+
+        payload = await handler.handle(
+            "I'm a university year one student, provide your answers accordingly.",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("tailor future answers", payload.reply)
+
+    async def test_strict_mode_uses_history_for_follow_up_practice_request(self) -> None:
+        reviewer = ScriptedLLMClient(
+            responses=[
+                '{"decision":"allow","reason_code":"allowed","summary":"history question","normalized_input":"Please explain the French Revolution."}',
+                '{"decision":"allow","reason_code":"allowed","summary":"follow-up practice request resolved from history","normalized_input":"Give me two short practice questions about it."}',
+            ]
+        )
+        generator = ScriptedLLMClient(
+            responses=[
+                "The French Revolution was a major political upheaval in France.",
+                "1. What were two major causes of the French Revolution? 2. Why was the Storming of the Bastille symbolically important?",
+            ]
+        )
+        auditor = ScriptedLLMClient(
+            responses=[
+                '{"decision":"approve","reason_code":"approved","summary":"safe","approved":true}',
+                '{"decision":"approve","reason_code":"approved","summary":"safe","approved":true}',
+            ]
+        )
+        conversation = ConversationManager()
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=conversation,
+            strict_reviewer=reviewer,
+            strict_generator=generator,
+            strict_auditor=auditor,
+        )
+
+        await handler.handle(
+            "Please explain the French Revolution.",
+            search_mode="off",
+            mode="strict",
+        )
+        payload = await handler.handle(
+            "Give me two short practice questions about it.",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("what were two major causes", payload.reply.lower())
+        self.assertEqual(len(reviewer.chat_calls), 2)
+        reviewer_second_call = reviewer.chat_calls[1]
+        self.assertTrue(
+            any("French Revolution" in message.get("content", "") for message in reviewer_second_call)
+        )
+
+    async def test_multi_turn_summary_is_answered_locally_in_normal_mode(self) -> None:
+        llm = ScriptedLLMClient(
+            responses=[
+                "The French Revolution began in 1789.",
+                "Here are two short practice questions.",
+            ]
+        )
+        conversation = ConversationManager()
+        handler = ResponseHandler(llm, conversation)
+
+        await handler.handle("Please explain the French Revolution.", search_mode="off")
+        await handler.handle("Give me two short practice questions about it.", search_mode="off")
+        payload = await handler.handle("Can you summarize our conversation so far?", search_mode="off")
+
+        self.assertIn("summary of our conversation", payload.reply.lower())
+        self.assertIn("French Revolution", payload.reply)
+        self.assertEqual(len(llm.chat_calls), 2)
+
+    async def test_multi_turn_summary_is_answered_locally_in_strict_mode(self) -> None:
+        reviewer = ScriptedLLMClient(
+            responses=[
+                '{"decision":"allow","reason_code":"allowed","summary":"history question","normalized_input":"Please explain the French Revolution."}',
+                '{"decision":"allow","reason_code":"allowed","summary":"follow-up practice request resolved from history","normalized_input":"Give me two short practice questions about it."}',
+            ]
+        )
+        generator = ScriptedLLMClient(
+            responses=[
+                "The French Revolution began in 1789.",
+                "Here are two short practice questions.",
+            ]
+        )
+        auditor = ScriptedLLMClient(
+            responses=[
+                '{"decision":"approve","reason_code":"approved","summary":"safe","approved":true}',
+                '{"decision":"approve","reason_code":"approved","summary":"safe","approved":true}',
+            ]
+        )
+        conversation = ConversationManager()
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=conversation,
+            strict_reviewer=reviewer,
+            strict_generator=generator,
+            strict_auditor=auditor,
+        )
+
+        await handler.handle(
+            "Please explain the French Revolution.",
+            search_mode="off",
+            mode="strict",
+        )
+        await handler.handle(
+            "Give me two short practice questions about it.",
+            search_mode="off",
+            mode="strict",
+        )
+        payload = await handler.handle(
+            "Can you summarize our conversation so far?",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("summary of our conversation", payload.reply.lower())
+        self.assertIn("French Revolution", payload.reply)
+        self.assertEqual(len(reviewer.chat_calls), 2)
