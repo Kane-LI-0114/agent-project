@@ -36,6 +36,7 @@ from config.settings import (
     SEARCH_KNOWLEDGE_PAGES,
     SEARCH_MAX_MERGED_SOURCES,
     SEARCH_MAX_SOURCES_PER_QUERY,
+    SEARCH_REVIEWER_TIMEOUT_SECONDS,
 )
 from llm.base_client import BaseLLMClient
 
@@ -95,6 +96,20 @@ Task:
 
 Output format:
 {{"queries": ["query 1", "query 2", ...]}}
+""".strip()
+
+_SEARCH_REVIEW_PROMPT = """You review retrieved web-search sources for a homework tutoring assistant.
+Return JSON only.
+
+Task:
+- Read the user's original query and the retrieved sources.
+- Keep only the sources that are genuinely relevant for answering the current question.
+- A source may be kept when its title/snippet clearly matches the same topic, entity, concept, event, timeframe, or a directly useful background explanation.
+- Drop sources that are tangential, generic, ambiguous, weakly related, caused by keyword mismatch, or clearly about a different topic.
+- When uncertain, drop the source.
+
+Output format:
+{{"relevant_indexes": [1, 3]}}
 """.strip()
 
 
@@ -204,8 +219,13 @@ class _ParagraphExtractor(HTMLParser):
 class SearchService:
     """Runs optional live search, with optional LLM-driven query expansion."""
 
-    def __init__(self, query_optimizer: BaseLLMClient | None = None) -> None:
+    def __init__(
+        self,
+        query_optimizer: BaseLLMClient | None = None,
+        result_reviewer: BaseLLMClient | None = None,
+    ) -> None:
         self._query_optimizer = query_optimizer
+        self._result_reviewer = result_reviewer
 
     def should_execute(self, query: str, mode: SearchMode) -> bool:
         """Return whether a query should trigger live search."""
@@ -376,10 +396,18 @@ class SearchService:
         deduped = self._dedupe_sources(merged)[:SEARCH_MAX_MERGED_SOURCES]
         if not deduped:
             return None
+
+        reviewed_sources = await self._review_sources(
+            original_query,
+            finalized_queries,
+            deduped,
+        )
+        if not reviewed_sources:
+            return None
         return SearchResult(
             original_query=original_query,
             optimized_queries=finalized_queries,
-            sources=deduped,
+            sources=reviewed_sources,
         )
 
     async def _search_single_query(self, query: str) -> List[SearchSource]:
@@ -410,14 +438,94 @@ class SearchService:
         return merged[:SEARCH_MAX_SOURCES_PER_QUERY]
 
     def _parse_optimizer_queries(self, raw: str) -> List[str]:
+        try:
+            parsed = self._parse_json_payload(raw)
+        except (ValueError, json.JSONDecodeError):
+            return []
+        return self._normalize_queries_payload(parsed)
+
+    async def _review_sources(
+        self,
+        original_query: str,
+        optimized_queries: List[str],
+        sources: List[SearchSource],
+    ) -> List[SearchSource]:
+        if not sources:
+            return []
+        if self._result_reviewer is None:
+            return self._fallback_filter_sources(original_query, sources)
+
+        payload = {
+            "original_query": original_query,
+            "optimized_queries": optimized_queries,
+            "sources": [
+                {
+                    "index": index,
+                    **source.to_dict(),
+                }
+                for index, source in enumerate(sources, start=1)
+            ],
+        }
+        messages = [
+            {"role": "system", "content": _SEARCH_REVIEW_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        try:
+            raw = await asyncio.wait_for(
+                self._result_reviewer.chat(messages),
+                timeout=SEARCH_REVIEWER_TIMEOUT_SECONDS,
+            )
+            kept_indexes = set(self._parse_reviewer_indexes(raw, len(sources)))
+            filtered = [
+                source
+                for index, source in enumerate(sources, start=1)
+                if index in kept_indexes
+            ]
+            logger.info(
+                "Search reviewer kept %d/%d sources for %r.",
+                len(filtered),
+                len(sources),
+                original_query,
+            )
+            return filtered
+        except (asyncio.TimeoutError, RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("Search reviewer failed for %r: %s", original_query, exc)
+            return self._fallback_filter_sources(original_query, sources)
+
+    def _parse_reviewer_indexes(self, raw: str, max_index: int) -> List[int]:
+        payload = self._parse_json_payload(raw)
+        items: Any = None
+        if isinstance(payload, dict):
+            for key in ("relevant_indexes", "kept_indexes", "indexes", "indices", "source_indexes"):
+                if key in payload:
+                    items = payload[key]
+                    break
+        elif isinstance(payload, list):
+            items = payload
+
+        if not isinstance(items, list):
+            raise ValueError("Reviewer returned no usable index list.")
+
+        indexes: List[int] = []
+        for item in items:
+            if isinstance(item, int):
+                index = item
+            elif isinstance(item, str) and item.strip().isdigit():
+                index = int(item.strip())
+            else:
+                continue
+            if 1 <= index <= max_index and index not in indexes:
+                indexes.append(index)
+        return indexes
+
+    def _parse_json_payload(self, raw: str) -> Any:
         text = (raw or "").strip()
         if not text:
-            return []
+            raise ValueError("LLM returned empty JSON payload.")
         try:
-            parsed = json.loads(text)
+            return json.loads(text)
         except json.JSONDecodeError:
-            parsed = self._extract_json_payload(text)
-        return self._normalize_queries_payload(parsed)
+            return self._extract_json_payload(text)
 
     def _extract_json_payload(self, text: str) -> Any:
         if "```" in text:
@@ -472,6 +580,21 @@ class SearchService:
                 queries.append(cleaned)
         return queries
 
+    def _fallback_filter_sources(self, query: str, sources: List[SearchSource]) -> List[SearchSource]:
+        terms = self._meaningful_terms(query)
+        filtered = [
+            source
+            for source in sources
+            if self._basic_relevance_score(query, source, terms) >= 3
+        ]
+        logger.info(
+            "Search fallback filter kept %d/%d sources for %r.",
+            len(filtered),
+            len(sources),
+            query,
+        )
+        return filtered
+
     def _finalize_queries(self, queries: List[str], original_query: str) -> List[str]:
         finalized: List[str] = []
         seen = set()
@@ -516,6 +639,29 @@ class SearchService:
         cleaned = re.sub(r"^[\-\*\d\.)\s]+", "", cleaned)
         cleaned = cleaned.strip("'\" ")
         return cleaned
+
+    def _basic_relevance_score(
+        self,
+        query: str,
+        source: SearchSource,
+        terms: Iterable[str],
+    ) -> int:
+        combined = f"{source.title} {source.snippet}".lower()
+        title_lower = source.title.lower()
+        cleaned_query = self._clean_query(query).lower()
+        score = 0
+        if cleaned_query and cleaned_query in combined:
+            score += 5
+        term_hits = 0
+        for term in terms:
+            if term in combined:
+                term_hits += 1
+                score += 2 if term in title_lower else 1
+        if term_hits >= 2:
+            score += 1
+        if self._looks_academic(query) and source.provider in {"OpenAlex", "arXiv", "PubMed"} and term_hits:
+            score += 1
+        return score
 
     def _duckduckgo_instant_answer(self, query: str) -> List[SearchSource]:
         params = urlencode(

@@ -20,16 +20,19 @@ from dataclasses import asdict, dataclass
 from typing import Any, AsyncGenerator, Literal, Optional
 
 from config.settings import (
+    FOLLOWUP_SUGGESTER_TIMEOUT_SECONDS,
     STRICT_AUDITOR_TIMEOUT_SECONDS,
     STRICT_GENERATOR_TIMEOUT_SECONDS,
     STRICT_MAX_GENERATION_ATTEMPTS,
     STRICT_REFUSAL_MESSAGE,
     STRICT_REVIEWER_TIMEOUT_SECONDS,
+    build_followup_suggestion_prompt,
     build_subject_change_note,
     build_strict_generator_prompt,
     build_strict_input_review_prompt,
     build_strict_output_audit_prompt,
     build_system_prompt,
+    format_subject_display_name,
     normalize_subject_selection,
 )
 from core.conversation import ConversationManager
@@ -68,6 +71,7 @@ class ResponsePayload:
     sources: list[dict[str, str]]
     mode: ChatMode = "normal"
     strict_trace: list[dict[str, Any]] | None = None
+    follow_up_suggestions: list[str] | None = None
 
 
 class ResponseHandler:
@@ -83,13 +87,15 @@ class ResponseHandler:
         strict_reviewer: BaseLLMClient | None = None,
         strict_generator: BaseLLMClient | None = None,
         strict_auditor: BaseLLMClient | None = None,
+        followup_suggester: BaseLLMClient | None = None,
     ) -> None:
         self._llm = llm_client
         self._conv = conversation
-        self._search = search_service or SearchService()
+        self._search = search_service or SearchService(result_reviewer=llm_client)
         self._strict_reviewer = strict_reviewer
         self._strict_generator = strict_generator
         self._strict_auditor = strict_auditor
+        self._followup_suggester = followup_suggester
 
     async def handle(
         self,
@@ -114,6 +120,31 @@ class ResponseHandler:
             subject_change_note=subject_change_note,
         )
 
+    async def _build_payload(
+        self,
+        *,
+        reply: str,
+        sources: list[dict[str, str]],
+        mode: ChatMode,
+        user_input: str,
+        selected_subjects: list[str] | None = None,
+        strict_trace: list[dict[str, Any]] | None = None,
+    ) -> ResponsePayload:
+        """Return a response payload augmented with follow-up suggestions."""
+        follow_up_suggestions = await self._generate_follow_up_suggestions(
+            user_input=user_input,
+            assistant_reply=reply,
+            selected_subjects=selected_subjects,
+            mode=mode,
+        )
+        return ResponsePayload(
+            reply=reply,
+            sources=sources,
+            mode=mode,
+            strict_trace=strict_trace,
+            follow_up_suggestions=follow_up_suggestions,
+        )
+
     async def _handle_normal(
         self,
         user_input: str,
@@ -133,7 +164,13 @@ class ResponseHandler:
                 prefilter.reason_code,
             )
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(reply=reply, sources=[], mode="normal")
+            return await self._build_payload(
+                reply=reply,
+                sources=[],
+                mode="normal",
+                user_input=prefilter.normalized_input or user_input,
+                selected_subjects=subjects,
+            )
 
         level = detect_academic_level(prefilter.normalized_input)
         if level:
@@ -144,13 +181,25 @@ class ResponseHandler:
             self._conv.add_user_message(prefilter.normalized_input)
             reply = self._build_academic_level_acknowledgement(level or "student")
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(reply=reply, sources=[], mode="normal")
+            return await self._build_payload(
+                reply=reply,
+                sources=[],
+                mode="normal",
+                user_input=prefilter.normalized_input,
+                selected_subjects=subjects,
+            )
 
         if is_conversation_summary_request(prefilter.normalized_input):
             reply = self._build_conversation_summary_reply()
             self._conv.add_user_message(prefilter.normalized_input)
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(reply=reply, sources=[], mode="normal")
+            return await self._build_payload(
+                reply=reply,
+                sources=[],
+                mode="normal",
+                user_input=prefilter.normalized_input,
+                selected_subjects=subjects,
+            )
 
         self._conv.add_user_message(prefilter.normalized_input)
         search_result = await self._search.maybe_search(prefilter.normalized_input, search_mode)
@@ -167,10 +216,12 @@ class ResponseHandler:
             reply = f"[ERROR] Failed to get a response from the LLM: {exc}"
 
         self._conv.add_assistant_message(reply)
-        return ResponsePayload(
+        return await self._build_payload(
             reply=reply,
             sources=search_result.to_dict_list() if search_result else [],
             mode="normal",
+            user_input=prefilter.normalized_input,
+            selected_subjects=subjects,
         )
 
     async def _handle_strict(
@@ -225,10 +276,12 @@ class ResponseHandler:
             log_refusal(user_input, normalized_input, prefilter.stage, prefilter.reason_code)
             self._conv.add_user_message(normalized_input or user_input)
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(
+            return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="strict",
+                user_input=normalized_input or user_input,
+                selected_subjects=subjects,
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
@@ -262,10 +315,12 @@ class ResponseHandler:
             )
             self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(
+            return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="strict",
+                user_input=normalized_input,
+                selected_subjects=subjects,
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
@@ -294,10 +349,12 @@ class ResponseHandler:
             )
             self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(
+            return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="strict",
+                user_input=normalized_input,
+                selected_subjects=subjects,
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
@@ -338,10 +395,12 @@ class ResponseHandler:
             )
             self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
-            return ResponsePayload(
+            return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="strict",
+                user_input=normalized_input,
+                selected_subjects=subjects,
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
@@ -482,10 +541,12 @@ class ResponseHandler:
             )
 
         self._conv.add_assistant_message(final_reply)
-        return ResponsePayload(
+        return await self._build_payload(
             reply=final_reply,
             sources=search_sources,
             mode="strict",
+            user_input=normalized_input,
+            selected_subjects=subjects,
             strict_trace=[asdict(stage) for stage in trace],
         )
 
@@ -547,6 +608,15 @@ class ResponseHandler:
             async for event in self._stream_stage_summary(trace, 0, trace[0].summary):
                 yield event
             yield {"type": "strict_final", "reply": reply, "sources": []}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input or user_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="strict",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -582,6 +652,15 @@ class ResponseHandler:
             self._conv.add_assistant_message(reply)
             yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
             yield {"type": "strict_final", "reply": reply, "sources": []}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="strict",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -612,6 +691,15 @@ class ResponseHandler:
             self._conv.add_assistant_message(reply)
             yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
             yield {"type": "strict_final", "reply": reply, "sources": []}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="strict",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -659,6 +747,15 @@ class ResponseHandler:
             self._conv.add_assistant_message(reply)
             yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
             yield {"type": "strict_final", "reply": reply, "sources": []}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="strict",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -835,6 +932,15 @@ class ResponseHandler:
             "reply": final_reply,
             "sources": search_sources,
         }
+        yield {
+            "type": "follow_up_suggestions",
+            "suggestions": await self._generate_follow_up_suggestions(
+                user_input=normalized_input,
+                assistant_reply=final_reply,
+                selected_subjects=subjects,
+                mode="strict",
+            ),
+        }
         yield {"type": "done"}
 
     async def handle_stream(
@@ -858,6 +964,16 @@ class ResponseHandler:
             )
             self._conv.add_assistant_message(reply)
             yield {"type": "token", "token": reply}
+            yield {"type": "reply_complete"}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=prefilter.normalized_input or user_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="normal",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -871,6 +987,16 @@ class ResponseHandler:
             reply = self._build_academic_level_acknowledgement(level or "student")
             self._conv.add_assistant_message(reply)
             yield {"type": "token", "token": reply}
+            yield {"type": "reply_complete"}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=prefilter.normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="normal",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -879,6 +1005,16 @@ class ResponseHandler:
             self._conv.add_user_message(prefilter.normalized_input)
             self._conv.add_assistant_message(reply)
             yield {"type": "token", "token": reply}
+            yield {"type": "reply_complete"}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=prefilter.normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="normal",
+                ),
+            }
             yield {"type": "done"}
             return
 
@@ -920,6 +1056,16 @@ class ResponseHandler:
             yield {"type": "token", "token": error_msg}
 
         self._conv.add_assistant_message(full_reply)
+        yield {"type": "reply_complete"}
+        yield {
+            "type": "follow_up_suggestions",
+            "suggestions": await self._generate_follow_up_suggestions(
+                user_input=prefilter.normalized_input,
+                assistant_reply=full_reply,
+                selected_subjects=subjects,
+                mode="normal",
+            ),
+        }
         yield {"type": "done"}
 
     def _build_messages(
@@ -1072,6 +1218,137 @@ class ResponseHandler:
                 "approved": False,
             },
         )
+
+    async def _generate_follow_up_suggestions(
+        self,
+        user_input: str,
+        assistant_reply: str,
+        selected_subjects: list[str] | None = None,
+        mode: ChatMode = "normal",
+        exclude_suggestions: list[str] | None = None,
+    ) -> list[str]:
+        """Generate three short follow-up suggestions for the UI."""
+        subjects = self._normalize_subjects(selected_subjects)
+        fallback = self._fallback_follow_up_suggestions(
+            user_input=user_input,
+            assistant_reply=assistant_reply,
+            selected_subjects=subjects,
+        )
+        if self._followup_suggester is None:
+            return self._sanitize_follow_up_suggestions(
+                fallback,
+                fallback,
+                exclude_suggestions=exclude_suggestions,
+            )
+        payload = {
+            "user_input": user_input.strip(),
+            "assistant_reply": assistant_reply.strip(),
+            "mode": mode,
+            "allowed_subjects": subjects,
+            "reply_was_refusal": assistant_reply.strip() == STRICT_REFUSAL_MESSAGE,
+            "exclude_suggestions": list(exclude_suggestions or []),
+        }
+        response = await self._run_json_stage(
+            client=self._followup_suggester,
+            messages=[
+                {"role": "system", "content": build_followup_suggestion_prompt(subjects)},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            timeout_seconds=FOLLOWUP_SUGGESTER_TIMEOUT_SECONDS,
+            fallback={"suggestions": fallback},
+        )
+        return self._sanitize_follow_up_suggestions(
+            response.get("suggestions"),
+            fallback,
+            exclude_suggestions=exclude_suggestions,
+        )
+
+    async def generate_follow_up_suggestions(
+        self,
+        user_input: str,
+        assistant_reply: str,
+        selected_subjects: list[str] | None = None,
+        mode: ChatMode = "normal",
+        exclude_suggestions: list[str] | None = None,
+    ) -> list[str]:
+        """Public wrapper for follow-up suggestion regeneration."""
+        return await self._generate_follow_up_suggestions(
+            user_input=user_input,
+            assistant_reply=assistant_reply,
+            selected_subjects=selected_subjects,
+            mode=mode,
+            exclude_suggestions=exclude_suggestions,
+        )
+
+    def _sanitize_follow_up_suggestions(
+        self,
+        raw_suggestions: Any,
+        fallback: list[str],
+        exclude_suggestions: list[str] | None = None,
+    ) -> list[str]:
+        """Normalize the model output into three clean, unique button labels."""
+        cleaned: list[str] = []
+        seen: set[str] = {
+            " ".join(str(item or "").split()).strip().casefold()
+            for item in (exclude_suggestions or [])
+            if str(item or "").strip()
+        }
+
+        if isinstance(raw_suggestions, list):
+            candidates = raw_suggestions
+        else:
+            candidates = []
+
+        for item in [*candidates, *fallback]:
+            text = " ".join(str(item or "").split()).strip().strip("\"'“”")
+            text = text.lstrip("-•0123456789. )(").strip()
+            if not text:
+                continue
+            if len(text) > 120:
+                text = text[:117].rstrip() + "..."
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+            if len(cleaned) == 3:
+                break
+
+        return cleaned[:3]
+
+    def _fallback_follow_up_suggestions(
+        self,
+        user_input: str,
+        assistant_reply: str,
+        selected_subjects: list[str] | None = None,
+    ) -> list[str]:
+        """Return deterministic fallbacks if the follow-up model fails."""
+        subjects = self._normalize_subjects(selected_subjects)
+        primary = format_subject_display_name(subjects[0]).lower() if subjects else "math"
+        secondary = format_subject_display_name(subjects[1]).lower() if len(subjects) > 1 else primary
+        if assistant_reply.strip() == STRICT_REFUSAL_MESSAGE:
+            return [
+                f"Can you help with a {primary} homework question instead?",
+                f"Give me a short {secondary} practice problem.",
+                f"Ask me a {primary} question related to today's topic.",
+            ]
+        if any(token in assistant_reply.lower() for token in ("[error]", "failed")):
+            return [
+                f"Can we retry with a {primary} question?",
+                f"Give me a clear {secondary} example instead.",
+                f"Can you ask me a short {primary} follow-up question?",
+            ]
+        if any(token in user_input.lower() for token in ("exercise", "practice", "quiz")):
+            return [
+                "Can you give me another practice question?",
+                "Can you show the solution step by step?",
+                "Can you increase the difficulty slightly?",
+            ]
+        return [
+            "Can you explain that in a simpler way?",
+            "Can you turn that into a short practice question?",
+            "Can you ask me a follow-up question on this topic?",
+        ]
 
     def _normalize_subjects(self, selected_subjects: list[str] | None) -> list[str]:
         """Return the canonical subject scope for the current request."""

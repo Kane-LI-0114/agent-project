@@ -221,6 +221,16 @@ const DEMO_SUBJECT_LABELS = {
   "sports": "Sports"
 };
 
+const SUBJECT_HINT_PATTERNS = {
+  math: [/\bmath(?:s|ematics)?\b/i, /\balgebra\b/i, /\bcalculus\b/i, /\bderivative\b/i, /\bintegral\b/i, /\bprobab(?:ility|ility)\b/i, /\bstatistic/i, /\bgeometry\b/i, /\bequation\b/i, /\btriangle\b/i, /\bmatrix\b/i, /\blimit\b/i],
+  history: [/\bhistory\b/i, /\brevolution\b/i, /\bwar\b/i, /\bempire\b/i, /\bcold war\b/i, /\bdynasty\b/i, /\bancient\b/i, /\bmedieval\b/i, /\bworld war\b/i, /\brestoration\b/i],
+  geography: [/\bgeography\b/i, /\bclimate\b/i, /\bmonsoon\b/i, /\bdelta\b/i, /\bdesert\b/i, /\bearthquake\b/i, /\bpopulation density\b/i, /\burban heat island\b/i, /\bel niño\b/i, /\bla niña\b/i],
+  finance: [/\bfinance\b/i, /\bbond\b/i, /\bstock\b/i, /\bnpv\b/i, /\bcash flow\b/i, /\bcompound interest\b/i, /\binvest(?:or|ment)\b/i, /\bportfolio\b/i],
+  economics: [/\beconom(?:ic|ics)\b/i, /\belasticity\b/i, /\binflation\b/i, /\bsupply\b/i, /\bdemand\b/i, /\bequilibrium\b/i, /\bopportunity cost\b/i, /\bunemployment\b/i, /\bcomparative advantage\b/i],
+  philosophy: [/\bphilosophy\b/i, /\butilitarian/i, /\bdeontology\b/i, /\baristotle\b/i, /\bplato\b/i, /\bhobbes\b/i, /\btrolley problem\b/i, /\bvirtue\b/i],
+  chemistry: [/\bchemistry\b/i, /\batom(?:ic)?\b/i, /\bacid\b/i, /\bpH\b/i, /\bcatalyst\b/i, /\breaction\b/i, /\bnoble gas/i, /\bperiodic\b/i, /\bLe Chatelier\b/i],
+};
+
 const DEMO_ROTATION_DECKS = [
   [
     {
@@ -1508,6 +1518,185 @@ document.addEventListener('touchmove', event => {
   }
 }, { passive: true });
 
+function createFollowUpPanel() {
+  const panel = document.createElement('div');
+  panel.className = 'reply-followups';
+  panel.setAttribute('aria-hidden', 'true');
+  return panel;
+}
+
+function normalizeSuggestionText(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[-•\d.)\s]+/, '')
+    .trim()
+    .replace(/^["“'`]+|["”'`]+$/g, '');
+}
+
+function getRecentUserMessages(limit = 6) {
+  return Array.from(messageList.querySelectorAll('.msg-row.user .msg-bubble'))
+    .map(node => node.dataset.rawText || node.textContent || '')
+    .filter(Boolean)
+    .slice(-limit)
+    .reverse();
+}
+
+function inferSubjectFromTexts(...texts) {
+  for (const text of texts.flat().filter(Boolean)) {
+    for (const [subject, patterns] of Object.entries(SUBJECT_HINT_PATTERNS)) {
+      if (patterns.some(pattern => pattern.test(String(text)))) {
+        return subject;
+      }
+    }
+  }
+  return '';
+}
+
+function buildLocalFollowUpFallbacks(userMessage, messageSubjects) {
+  const recentTexts = [userMessage, ...getRecentUserMessages()];
+  const inferred = inferSubjectFromTexts(recentTexts);
+  const allowed = normalizeSubjects(messageSubjects);
+  const chosenSubject = allowed.includes(inferred) ? inferred : (allowed[0] || 'math');
+  const label = getDemoSubjectLabel(chosenSubject).toLowerCase();
+  return [
+    `Can you give me another ${label} example?`,
+    `Turn that into a short ${label} practice question.`,
+    `Ask me a short ${label} follow-up question.`,
+  ];
+}
+
+function buildReplySuggestions(userMessage, llmSuggestions = [], messageSubjects = ALLOWED_SUBJECTS) {
+  const suggestions = [];
+  const seen = new Set();
+
+  const pushSuggestion = value => {
+    const cleaned = normalizeSuggestionText(value);
+    if (!cleaned) return;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    suggestions.push(cleaned);
+  };
+
+  llmSuggestions.forEach(pushSuggestion);
+  buildLocalFollowUpFallbacks(userMessage, messageSubjects).forEach(value => {
+    if (suggestions.length < 3) {
+      pushSuggestion(value);
+    }
+  });
+  buildLocalFollowUpFallbacks(userMessage, messageSubjects).forEach(pushSuggestion);
+
+  return suggestions.slice(0, 3);
+}
+
+function setFollowUpRefreshState(state, refreshing) {
+  if (!state || !state.followupsPanel) return;
+  state.isRefreshingFollowUps = !!refreshing;
+  const button = state.followupsPanel.querySelector('.reply-followups-refresh');
+  if (!button) return;
+  button.disabled = !!refreshing;
+  button.classList.toggle('is-spinning', !!refreshing);
+}
+
+async function regenerateFollowUpSuggestions(state) {
+  if (!state || state.isRefreshingFollowUps || !state.assistantReply) return;
+
+  setFollowUpRefreshState(state, true);
+  try {
+    const res = await fetch('/api/followups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_message: state.userMessage || '',
+        assistant_reply: state.assistantReply || '',
+        mode: state.mode || 'normal',
+        selected_subjects: normalizeSubjects(state.messageSubjects || ALLOWED_SUBJECTS),
+        exclude_suggestions: state.currentFollowUpSuggestions || [],
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error('Failed to refresh suggestions');
+    }
+
+    const payload = await res.json();
+    queueFollowUpSuggestions(state, payload.suggestions || []);
+  } catch (_) {
+    queueFollowUpSuggestions(state, buildLocalFollowUpFallbacks(state.userMessage || '', state.messageSubjects || ALLOWED_SUBJECTS));
+  } finally {
+    setFollowUpRefreshState(state, false);
+  }
+}
+
+function renderReplyFollowUps(state) {
+  const panel = state?.followupsPanel;
+  if (!panel) return;
+
+  const suggestions = buildReplySuggestions(
+    state.userMessage || '',
+    state.pendingFollowUpSuggestions || [],
+    state.messageSubjects || ALLOWED_SUBJECTS,
+  );
+  if (!suggestions.length) {
+    panel.innerHTML = '';
+    panel.classList.remove('is-visible');
+    panel.setAttribute('aria-hidden', 'true');
+    state.currentFollowUpSuggestions = [];
+    return;
+  }
+
+  state.currentFollowUpSuggestions = suggestions.slice();
+  panel.innerHTML = `
+    <div class="reply-followups-head">
+      <div class="reply-followups-label">Possible replies</div>
+      <button class="reply-followups-refresh" type="button" aria-label="Regenerate possible replies" title="Regenerate possible replies">
+        <span class="reply-followups-refresh-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M12.75 5.75C12.21 4.31 10.83 3.28 9.2 3.04C7.57 2.8 5.95 3.38 4.84 4.57L3.75 5.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.75 3.25V5.75H6.25" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.25 10.25C3.79 11.69 5.17 12.72 6.8 12.96C8.43 13.2 10.05 12.62 11.16 11.43L12.25 10.25" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12.25 12.75V10.25H9.75" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="reply-followups-refresh-label">Refresh</span>
+      </button>
+    </div>
+    <div class="reply-followups-list">
+      ${suggestions.map((text, index) => `
+        <button class="reply-followup-btn" type="button" style="--suggest-index:${index}">
+          <span class="reply-followup-copy">${escapeHtml(text)}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  panel.querySelectorAll('.reply-followup-btn').forEach((button, index) => {
+    button.addEventListener('click', () => sendMessage(suggestions[index]));
+  });
+  const refreshButton = panel.querySelector('.reply-followups-refresh');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => regenerateFollowUpSuggestions(state));
+  }
+
+  panel.setAttribute('aria-hidden', 'false');
+  panel.classList.remove('is-visible');
+  requestAnimationFrame(() => panel.classList.add('is-visible'));
+  setFollowUpRefreshState(state, !!state.isRefreshingFollowUps);
+  scrollToBottom(true);
+}
+
+function maybeRenderPendingFollowUps(state) {
+  if (!state || !state.canRenderFollowUps || !state.followupsPanel) return;
+  if (!Array.isArray(state.pendingFollowUpSuggestions)) return;
+  renderReplyFollowUps(state);
+}
+
+function queueFollowUpSuggestions(state, suggestions) {
+  if (!state) return;
+  state.pendingFollowUpSuggestions = Array.isArray(suggestions) ? suggestions.slice(0, 3) : [];
+  maybeRenderPendingFollowUps(state);
+}
+
 function appendMessage(role, text) {
   const row = document.createElement('div');
   row.className = 'msg-row ' + role;
@@ -1534,7 +1723,7 @@ function appendMessage(role, text) {
   return bubble;
 }
 
-function createStreamingMessage() {
+function createStreamingMessage(userMessage = '', messageSubjects = ALLOWED_SUBJECTS) {
   const searchRow = document.createElement('div');
   searchRow.className = 'msg-row bot search-status-row';
   searchRow.setAttribute('aria-hidden', 'true');
@@ -1596,6 +1785,7 @@ function createStreamingMessage() {
 
   const { actions, copyButton } = createMessageActions('bot', () => bubble.dataset.rawText || '');
   actions.classList.add('is-disabled');
+  const followupsPanel = createFollowUpPanel();
 
   const sourcesPanel = document.createElement('div');
   sourcesPanel.className = 'message-sources';
@@ -1608,6 +1798,7 @@ function createStreamingMessage() {
   card.appendChild(bubble);
   card.appendChild(actions);
   card.appendChild(sourcesPanel);
+  card.appendChild(followupsPanel);
   row.appendChild(card);
   messageList.appendChild(row);
   scrollToBottom(true);
@@ -1619,6 +1810,7 @@ function createStreamingMessage() {
     bubble,
     shell,
     content,
+    followupsPanel,
     actions,
     copyButton,
     inlinePending,
@@ -1639,10 +1831,18 @@ function createStreamingMessage() {
     queryRotationIndex: 0,
     searchQueries: [],
     hasVisibleContent: false,
+    userMessage,
+    messageSubjects,
+    pendingFollowUpSuggestions: null,
+    canRenderFollowUps: false,
+    currentFollowUpSuggestions: [],
+    assistantReply: '',
+    isRefreshingFollowUps: false,
+    mode: 'normal',
   };
 }
 
-function createStrictMessage() {
+function createStrictMessage(userMessage = '', messageSubjects = ALLOWED_SUBJECTS) {
   const row = document.createElement('div');
   row.className = 'msg-row bot';
 
@@ -1678,6 +1878,7 @@ function createStrictMessage() {
   const sourcesPanel = document.createElement('div');
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
+  const followupsPanel = createFollowUpPanel();
 
   const { actions, copyButton } = createMessageActions('bot', () => finalContent.dataset.rawText || '');
   actions.classList.add('is-hidden');
@@ -1687,10 +1888,11 @@ function createStrictMessage() {
   strictWrap.appendChild(strictHeader);
   strictWrap.appendChild(cards);
   strictWrap.appendChild(finalAnswer);
-  strictWrap.appendChild(sourcesPanel);
   bubble.appendChild(strictWrap);
   card.appendChild(bubble);
   card.appendChild(actions);
+  card.appendChild(sourcesPanel);
+  card.appendChild(followupsPanel);
   row.appendChild(card);
   messageList.appendChild(row);
 
@@ -1712,11 +1914,20 @@ function createStrictMessage() {
     finalAnswer,
     finalContent,
     sourcesPanel,
+    followupsPanel,
     actions,
     copyButton,
     trace,
     finalAnimator,
     pendingSources: [],
+    userMessage,
+    messageSubjects,
+    pendingFollowUpSuggestions: null,
+    canRenderFollowUps: false,
+    currentFollowUpSuggestions: [],
+    assistantReply: '',
+    isRefreshingFollowUps: false,
+    mode: 'strict',
   };
 }
 
@@ -2162,9 +2373,13 @@ function animateStrictFinalAnswer(strictState, text, sources) {
   if (!strictState) return;
   strictState.finalAnswer.classList.remove('is-hidden');
   strictState.finalContent.dataset.rawText = text || '';
+  strictState.assistantReply = text || '';
   strictState.actions.classList.remove('is-hidden');
+  strictState.canRenderFollowUps = false;
   animateTextIntoState(strictState.finalAnimator, text || '', () => {
     renderSourcesPanel(strictState.sourcesPanel, sources || strictState.pendingSources || []);
+    strictState.canRenderFollowUps = true;
+    maybeRenderPendingFollowUps(strictState);
     scrollToBottom(true);
   });
 }
@@ -2195,10 +2410,13 @@ function finalizeStreamingMessage(streamState) {
   streamState.bubble.classList.remove('streaming');
   streamState.bubble.classList.remove('searching');
   streamState.bubble.dataset.rawText = streamState.rawText;
+  streamState.assistantReply = streamState.rawText || '';
   streamState.actions.classList.toggle('is-disabled', !streamState.rawText);
   if (streamState.hasVisibleContent) hideInlinePending(streamState);
   renderStreamingContent(streamState, true);
   renderSources(streamState);
+  streamState.canRenderFollowUps = true;
+  maybeRenderPendingFollowUps(streamState);
 
   scrollToBottom(true);
 }
@@ -2464,7 +2682,7 @@ async function sendMessage(text) {
 }
 
 async function sendStreamingMessage(msg, requestPayload) {
-  const streamState = createStreamingMessage();
+  const streamState = createStreamingMessage(msg, requestPayload.selected_subjects);
   activeStreamController = streamState;
 
   try {
@@ -2492,6 +2710,7 @@ async function sendStreamingMessage(msg, requestPayload) {
     const decoder = new TextDecoder();
     let buffer = '';
     let doneReceived = false;
+    let replyCompleted = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2517,6 +2736,11 @@ async function sendStreamingMessage(msg, requestPayload) {
               startSearchPending(streamState, payload.queries || []);
             } else if (payload.type === 'search_end') {
               finishSearchPending(streamState, payload.sources || []);
+            } else if (payload.type === 'reply_complete') {
+              finishStream(streamState);
+              replyCompleted = true;
+            } else if (payload.type === 'follow_up_suggestions') {
+              queueFollowUpSuggestions(streamState, payload.suggestions || []);
             } else if (payload.type === 'done') {
               doneReceived = true;
               break;
@@ -2531,7 +2755,9 @@ async function sendStreamingMessage(msg, requestPayload) {
       if (doneReceived) break;
     }
 
-    finishStream(streamState);
+    if (!replyCompleted) {
+      finishStream(streamState);
+    }
     return true;
   } catch (err) {
     if (err && err.name === 'AbortError') {
@@ -2547,7 +2773,7 @@ async function sendStreamingMessage(msg, requestPayload) {
 }
 
 async function sendStrictMessage(msg, requestPayload) {
-  const strictState = createStrictMessage();
+  const strictState = createStrictMessage(msg, requestPayload.selected_subjects);
   activeStreamController = strictState;
 
   try {
@@ -2596,6 +2822,8 @@ async function sendStrictMessage(msg, requestPayload) {
               updateStrictTrace(strictState, payload.trace || []);
             } else if (payload.type === 'strict_final') {
               animateStrictFinalAnswer(strictState, payload.reply || '[Error] Empty response.', payload.sources || []);
+            } else if (payload.type === 'follow_up_suggestions') {
+              queueFollowUpSuggestions(strictState, payload.suggestions || []);
             } else if (payload.type === 'search_start') {
               // Strict mode shows progress in the stage cards, so no extra pending shell is used.
             } else if (payload.type === 'search_end') {

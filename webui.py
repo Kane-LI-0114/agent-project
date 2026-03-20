@@ -78,10 +78,14 @@ def get_handler() -> ResponseHandler:
         handler = ResponseHandler(
             llm_client,
             conversation,
-            search_service=SearchService(query_optimizer=get_llm_client("query_optimizer")),
+            search_service=SearchService(
+                query_optimizer=get_llm_client("query_optimizer"),
+                result_reviewer=get_llm_client("search_reviewer"),
+            ),
             strict_reviewer=get_llm_client("strict_reviewer"),
             strict_generator=get_llm_client("strict_generator"),
             strict_auditor=get_llm_client("strict_auditor"),
+            followup_suggester=get_llm_client("followup"),
         )
         return handler
     except (RuntimeError, ValueError) as exc:
@@ -106,6 +110,19 @@ class ChatResponse(BaseModel):
     sources: list[dict[str, str]]
     mode: Literal["normal", "strict"] = "normal"
     strict_trace: list[dict[str, object]] | None = None
+    follow_up_suggestions: list[str] = Field(default_factory=list)
+
+
+class FollowUpRequest(BaseModel):
+    user_message: str
+    assistant_reply: str
+    mode: Literal["normal", "strict"] = "normal"
+    selected_subjects: list[str] = Field(default_factory=lambda: list(ALLOWED_SUBJECTS))
+    exclude_suggestions: list[str] = Field(default_factory=list)
+
+
+class FollowUpResponse(BaseModel):
+    suggestions: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +147,7 @@ async def chat(req: ChatRequest):
                 "sources": [],
                 "mode": req.mode,
                 "strict_trace": None,
+                "follow_up_suggestions": [],
             },
         )
     return ChatResponse(
@@ -137,6 +155,7 @@ async def chat(req: ChatRequest):
         sources=payload.sources,
         mode=payload.mode,
         strict_trace=payload.strict_trace,
+        follow_up_suggestions=payload.follow_up_suggestions,
     )
 
 
@@ -193,6 +212,28 @@ async def chat_stream(req: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/followups", response_model=FollowUpResponse)
+async def followups(req: FollowUpRequest):
+    """Generate or regenerate reply suggestions without mutating chat history."""
+    try:
+        suggestions = await get_handler().generate_follow_up_suggestions(
+            user_input=req.user_message,
+            assistant_reply=req.assistant_reply,
+            selected_subjects=req.selected_subjects,
+            mode=req.mode,
+            exclude_suggestions=req.exclude_suggestions,
+        )
+    except RuntimeError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "suggestions": [],
+                "error": str(exc),
+            },
+        )
+    return FollowUpResponse(suggestions=suggestions)
 
 
 @app.post("/api/clear")

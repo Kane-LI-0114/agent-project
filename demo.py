@@ -171,7 +171,10 @@ async def main() -> None:
     handler = ResponseHandler(
         llm_client,
         conversation,
-        search_service=SearchService(query_optimizer=get_llm_client("query_optimizer")),
+        search_service=SearchService(
+            query_optimizer=get_llm_client("query_optimizer"),
+            result_reviewer=get_llm_client("search_reviewer"),
+        ),
         strict_reviewer=get_llm_client("strict_reviewer"),
         strict_generator=get_llm_client("strict_generator"),
         strict_auditor=get_llm_client("strict_auditor"),

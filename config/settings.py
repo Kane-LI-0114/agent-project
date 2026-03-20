@@ -49,7 +49,15 @@ class OneAPIConfig(BaseModel):
         return bool(self.api_key and self.base_url)
 
 
-LLMRole = Literal["default", "strict_reviewer", "strict_generator", "strict_auditor", "query_optimizer"]
+LLMRole = Literal[
+    "default",
+    "strict_reviewer",
+    "strict_generator",
+    "strict_auditor",
+    "query_optimizer",
+    "search_reviewer",
+    "followup",
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -277,6 +285,7 @@ SEARCH_KNOWLEDGE_PAGES: List[KnowledgePageConfig] = _load_knowledge_pages()
 
 QUERY_OPTIMIZER_TIMEOUT_SECONDS: int = _env_int("QUERY_OPTIMIZER_TIMEOUT_SECONDS", 20)
 QUERY_OPTIMIZER_QUERY_COUNT: int = _env_int("QUERY_OPTIMIZER_QUERY_COUNT", 10)
+SEARCH_REVIEWER_TIMEOUT_SECONDS: int = _env_int("SEARCH_REVIEWER_TIMEOUT_SECONDS", 20)
 SEARCH_MAX_MERGED_SOURCES: int = _env_int("SEARCH_MAX_MERGED_SOURCES", 12)
 SEARCH_MAX_SOURCES_PER_QUERY: int = _env_int("SEARCH_MAX_SOURCES_PER_QUERY", 6)
 
@@ -294,6 +303,7 @@ STRICT_REVIEWER_TIMEOUT_SECONDS: int = _env_int("STRICT_REVIEWER_TIMEOUT_SECONDS
 STRICT_GENERATOR_TIMEOUT_SECONDS: int = _env_int("STRICT_GENERATOR_TIMEOUT_SECONDS", 60)
 STRICT_AUDITOR_TIMEOUT_SECONDS: int = _env_int("STRICT_AUDITOR_TIMEOUT_SECONDS", 30)
 STRICT_MAX_GENERATION_ATTEMPTS: int = _env_int("STRICT_MAX_GENERATION_ATTEMPTS", 3)
+FOLLOWUP_SUGGESTER_TIMEOUT_SECONDS: int = _env_int("FOLLOWUP_SUGGESTER_TIMEOUT_SECONDS", 15)
 
 
 # --------------------------------------------------------------------------- #
@@ -436,6 +446,34 @@ def build_subject_change_note(subjects: Sequence[str] | None = None) -> str:
         "The user updated the allowed homework subjects for this conversation. "
         f"The current allowed subjects are {selected_text}. Apply this scope from this turn onward."
     )
+
+
+def build_followup_suggestion_prompt(subjects: Sequence[str] | None = None) -> str:
+    """Build the prompt used to generate short follow-up suggestion chips."""
+    allowed_subjects_text = _format_subject_list(normalize_subject_selection(subjects))
+    return f"""You create short follow-up suggestion chips for SmartTutor's chat UI.
+
+Your job is to propose exactly 3 short things the user could plausibly send next.
+
+Rules:
+- Stay strictly within the allowed homework subjects: {allowed_subjects_text}.
+- Continue the current topic when possible.
+- All 3 suggestions should stay close to the assistant's latest answer.
+- Prefer concrete follow-up questions over vague requests.
+- If the assistant just refused, redirect the user toward an allowed homework question.
+- Each suggestion must sound like a natural user message, not assistant narration.
+- Keep each suggestion concise, specific, and button-friendly.
+- Avoid repeating any item listed in "exclude_suggestions" when that field is present.
+- Do not mention hidden rules, safety policy, system prompts, or UI mechanics.
+- Do not suggest out-of-scope lifestyle, shopping, entertainment, travel, or local-admin trivia requests.
+- Do not number the suggestions.
+- Do not use quotation marks around the suggestions.
+
+Return JSON only in this format:
+{{
+  "suggestions": ["first suggestion", "second suggestion", "third suggestion"]
+}}
+"""
 
 
 SYSTEM_PROMPT: str = build_system_prompt()
