@@ -49,8 +49,18 @@
           <div class="toolbar-row">
             <div class="toolbar-dropdown" id="modeDropdown">
               <button class="toolbar-trigger" id="modeTrigger" type="button" aria-expanded="false" aria-controls="modeMenu">
-                <span class="toolbar-trigger-label">Mode</span>
-                <span class="toolbar-trigger-value" id="modeTriggerValue">Normal Mode</span>
+                <span class="toolbar-trigger-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 4.25H13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <path d="M3 8H13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <path d="M3 11.75H13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <circle cx="5.25" cy="4.25" r="1.5" fill="currentColor"/>
+                    <circle cx="10.75" cy="8" r="1.5" fill="currentColor"/>
+                    <circle cx="7.25" cy="11.75" r="1.5" fill="currentColor"/>
+                  </svg>
+                </span>
+                <span class="toolbar-trigger-label sr-only">Mode</span>
+                <span class="toolbar-trigger-value" id="modeTriggerValue">Normal</span>
                 <span class="toolbar-trigger-caret">+</span>
               </button>
               <div class="toolbar-menu" id="modeMenu" role="group" aria-label="Chat mode">
@@ -60,8 +70,14 @@
             </div>
             <div class="toolbar-dropdown" id="searchDropdown">
               <button class="toolbar-trigger" id="searchTrigger" type="button" aria-expanded="false" aria-controls="searchMenu">
-                <span class="toolbar-trigger-label">Search</span>
-                <span class="toolbar-trigger-value" id="searchTriggerValue">Auto Search</span>
+                <span class="toolbar-trigger-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                    <circle cx="7" cy="7" r="3.75" stroke="currentColor" stroke-width="1.4"/>
+                    <path d="M9.9 9.9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </span>
+                <span class="toolbar-trigger-label sr-only">Search</span>
+                <span class="toolbar-trigger-value" id="searchTriggerValue">Auto</span>
                 <span class="toolbar-trigger-caret">+</span>
               </button>
               <div class="toolbar-menu" id="searchMenu" role="group" aria-label="Search mode">
@@ -72,8 +88,14 @@
             </div>
             <div class="toolbar-dropdown toolbar-dropdown-subjects" id="subjectsDropdown">
               <button class="toolbar-trigger" id="subjectsTrigger" type="button" aria-expanded="false" aria-controls="subjectsMenu">
-                <span class="toolbar-trigger-label">Subjects</span>
-                <span class="toolbar-trigger-value" id="subjectsTriggerValue">All subjects</span>
+                <span class="toolbar-trigger-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 4.25C3 3.56 3.56 3 4.25 3H7.25C7.94 3 8.5 3.56 8.5 4.25V11.75C8.5 12.44 7.94 13 7.25 13H4.25C3.56 13 3 12.44 3 11.75V4.25Z" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M8.5 4.25C8.5 3.56 9.06 3 9.75 3H11.75C12.44 3 13 3.56 13 4.25V11.75C13 12.44 12.44 13 11.75 13H9.75C9.06 13 8.5 12.44 8.5 11.75V4.25Z" stroke="currentColor" stroke-width="1.3"/>
+                  </svg>
+                </span>
+                <span class="toolbar-trigger-label sr-only">Subjects</span>
+                <span class="toolbar-trigger-value" id="subjectsTriggerValue">All</span>
                 <span class="toolbar-trigger-caret">+</span>
               </button>
               <div class="toolbar-menu toolbar-menu-subjects" id="subjectsMenu" role="group" aria-label="Allowed subjects">
@@ -88,7 +110,7 @@
               </div>
             </div>
           </div>
-          <div class="search-status" id="searchStatus">Normal replies stream fast. Strict mode reviews first.</div>
+          <div class="search-status sr-only" id="searchStatus" aria-live="polite">Normal · Auto</div>
         </div>
         <div class="input-bar">
           <textarea id="userInput" rows="1" placeholder="Message SmartTutor..." onkeydown="handleKey(event)"></textarea>
@@ -302,10 +324,10 @@ function formatSubjectLabel(subject) {
 
 function buildSubjectsSummary(subjects) {
   const normalized = normalizeSubjects(subjects);
-  if (normalized.length === ALLOWED_SUBJECTS.length) return 'All subjects';
-  const preview = normalized.slice(0, 2).map(formatSubjectLabel);
-  const remaining = normalized.length - preview.length;
-  return remaining > 0 ? `${preview.join(', ')} + ${remaining}` : preview.join(', ');
+  if (normalized.length === ALLOWED_SUBJECTS.length) return 'All';
+  const optionalCount = normalized.filter(subject => !MANDATORY_SUBJECTS.includes(subject)).length;
+  if (optionalCount === 0) return 'Core';
+  return `Core + ${optionalCount}`;
 }
 
 function buildSubjectChangeNote(subjects) {
@@ -491,12 +513,12 @@ function createMessageActions(role, getCopyText) {
 function setChatMode(mode) {
   chatMode = mode === 'strict' && STRICT_MODE_ENABLED ? 'strict' : 'normal';
   const descriptions = {
-    normal: 'Normal replies stream fast.',
-    strict: 'Strict mode reviews first.',
+    normal: 'Normal',
+    strict: 'Strict',
   };
   const labels = {
-    normal: 'Normal Mode',
-    strict: 'Strict Mode',
+    normal: 'Normal',
+    strict: 'Strict',
   };
 
   modeDropdown.querySelectorAll('.toolbar-option').forEach(button => {
@@ -509,25 +531,25 @@ function setChatMode(mode) {
 function setSearchMode(mode) {
   searchMode = mode;
   const searchDescriptions = {
-    auto: 'Search only when the answer needs grounding.',
-    on: 'Search on every request.',
-    off: 'Web search stays off.',
+    auto: 'Auto',
+    on: 'On',
+    off: 'Off',
   };
   const modeDescriptions = {
-    normal: 'Normal replies stream fast.',
-    strict: 'Strict mode reviews first.',
+    normal: 'Normal',
+    strict: 'Strict',
   };
   const labels = {
-    auto: 'Auto Search',
-    on: 'Search On',
-    off: 'Search Off',
+    auto: 'Auto',
+    on: 'On',
+    off: 'Off',
   };
 
   searchDropdown.querySelectorAll('.toolbar-option').forEach(button => {
     button.classList.toggle('active', button.dataset.mode === mode);
   });
   searchTriggerValue.textContent = labels[mode] || 'Auto Search';
-  searchStatus.textContent = `${modeDescriptions[chatMode]} ${searchDescriptions[mode] || ''}`.trim();
+  searchStatus.textContent = `${modeDescriptions[chatMode]} · ${searchDescriptions[mode] || ''}`.trim();
 }
 
 function setDropdownOpen(dropdown, open) {
@@ -1776,9 +1798,7 @@ if (SEARCH_ENABLED) {
   searchDropdown.querySelectorAll('.toolbar-option, .toolbar-trigger').forEach(button => {
     button.disabled = true;
   });
-  searchStatus.textContent = chatMode === 'strict'
-    ? 'Strict reviews first. Search disabled.'
-    : 'Normal streams. Search disabled.';
+  searchStatus.textContent = chatMode === 'strict' ? 'Strict · Search off' : 'Normal · Search off';
 }
 
 subjectsTrigger.addEventListener('click', event => {
