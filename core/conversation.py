@@ -11,7 +11,7 @@ token counting via the ``tiktoken`` library.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import tiktoken  # type: ignore[import-not-found]  # pylint: disable=import-error
 
@@ -90,7 +90,11 @@ class ConversationManager:
         self._history.append({"role": "assistant", "content": content})
         self._truncate_if_needed()
 
-    def get_messages(self) -> List[Dict[str, str]]:
+    def get_messages(
+        self,
+        system_prompt_override: Optional[str] = None,
+        system_notes: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, str]]:
         """
         Build and return the full message list for a Chat Completions call,
         including the system prompt and all retained history.
@@ -99,13 +103,19 @@ class ConversationManager:
         prompt so the LLM can adapt its responses accordingly.
         """
         system = dict(self._system_message)  # shallow copy
+        if system_prompt_override:
+            system["content"] = system_prompt_override
         if self._academic_level:
             system["content"] += (
                 f"\n\n# User Academic Level\n"
                 f"The user is a {self._academic_level}. "
                 f"Adjust answer depth accordingly."
             )
-        return [system] + list(self._history)
+        messages = [system]
+        for note in system_notes or ():
+            if note and note.strip():
+                messages.append({"role": "system", "content": note.strip()})
+        return messages + list(self._history)
 
     def get_history_text(self) -> str:
         """

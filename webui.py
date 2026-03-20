@@ -24,11 +24,13 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config.settings import (
+    ALLOWED_SUBJECTS,
     DEMO_PROMPTS,
     ENABLE_BOT_MARKDOWN_LATEX,
+    MANDATORY_SUBJECTS,
     SEARCH_ENABLED,
     STRICT_MODE_ENABLED,
 )
@@ -95,6 +97,8 @@ class ChatRequest(BaseModel):
     message: str
     search_mode: Literal["auto", "on", "off"] = "auto"
     mode: Literal["normal", "strict"] = "normal"
+    selected_subjects: list[str] = Field(default_factory=lambda: list(ALLOWED_SUBJECTS))
+    subject_change_note: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -111,7 +115,13 @@ class ChatResponse(BaseModel):
 async def chat(req: ChatRequest):
     """Process a user message and return the complete reply (non-streaming)."""
     try:
-        payload = await get_handler().handle(req.message, req.search_mode, req.mode)
+        payload = await get_handler().handle(
+            req.message,
+            req.search_mode,
+            req.mode,
+            selected_subjects=req.selected_subjects,
+            subject_change_note=req.subject_change_note,
+        )
     except RuntimeError as exc:
         return JSONResponse(
             status_code=503,
@@ -154,12 +164,22 @@ async def chat_stream(req: ChatRequest):
             return
 
         if req.mode == "strict":
-            async for event in response_handler.handle_strict_stream(req.message, req.search_mode):
+            async for event in response_handler.handle_strict_stream(
+                req.message,
+                req.search_mode,
+                selected_subjects=req.selected_subjects,
+                subject_change_note=req.subject_change_note,
+            ):
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"
             return
 
-        async for event in response_handler.handle_stream(req.message, req.search_mode):
+        async for event in response_handler.handle_stream(
+            req.message,
+            req.search_mode,
+            selected_subjects=req.selected_subjects,
+            subject_change_note=req.subject_change_note,
+        ):
             # JSON-encode the chunk so special characters (newlines, quotes)
             # don't break the SSE framing.
             payload = json.dumps(event, ensure_ascii=False)
@@ -214,6 +234,14 @@ async def index():
     html = html.replace(
         "__STRICT_MODE_ENABLED__",
         "true" if STRICT_MODE_ENABLED else "false",
+    )
+    html = html.replace(
+        "__ALLOWED_SUBJECTS__",
+        json.dumps(ALLOWED_SUBJECTS, ensure_ascii=False),
+    )
+    html = html.replace(
+        "__MANDATORY_SUBJECTS__",
+        json.dumps(MANDATORY_SUBJECTS, ensure_ascii=False),
     )
     return HTMLResponse(html)
 

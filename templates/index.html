@@ -70,6 +70,23 @@
                 <button class="toolbar-option" type="button" data-mode="off">Search Off</button>
               </div>
             </div>
+            <div class="toolbar-dropdown toolbar-dropdown-subjects" id="subjectsDropdown">
+              <button class="toolbar-trigger" id="subjectsTrigger" type="button" aria-expanded="false" aria-controls="subjectsMenu">
+                <span class="toolbar-trigger-label">Subjects</span>
+                <span class="toolbar-trigger-value" id="subjectsTriggerValue">All subjects</span>
+                <span class="toolbar-trigger-caret">+</span>
+              </button>
+              <div class="toolbar-menu toolbar-menu-subjects" id="subjectsMenu" role="group" aria-label="Allowed subjects">
+                <div class="subjects-menu-shell">
+                  <div class="subjects-menu-header">
+                    <span class="subjects-menu-title">Allowed subjects</span>
+                    <span class="subjects-menu-caption">Math and History stay enabled.</span>
+                  </div>
+                  <div class="subjects-menu-list" id="subjectsMenuList"></div>
+                  <div class="subjects-menu-footer">Turning off “All subjects” returns to Math and History only.</div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="search-status" id="searchStatus">Normal replies stream fast. Strict mode reviews first.</div>
         </div>
@@ -98,6 +115,8 @@ let activeRequestController = null;
 const ENABLE_BOT_MARKDOWN_LATEX = __ENABLE_BOT_MARKDOWN_LATEX__;
 const SEARCH_ENABLED = __SEARCH_ENABLED__;
 const STRICT_MODE_ENABLED = __STRICT_MODE_ENABLED__;
+const ALLOWED_SUBJECTS = __ALLOWED_SUBJECTS__;
+const MANDATORY_SUBJECTS = __MANDATORY_SUBJECTS__;
 const STREAM_FLUSH_INTERVAL = 24;
 const STREAM_MIN_BATCH = 1;
 const STREAM_MAX_BATCH = 14;
@@ -108,8 +127,13 @@ const SOURCES_WIDTH_COLLAPSE_MS = 380;
 let sourcesDisclosureId = 0;
 const SEARCH_QUERY_ROTATE_DELAY_MS = 900;
 const SEARCH_QUERY_ROTATE_INTERVAL_MS = 1600;
+const SUBJECTS_STORAGE_KEY = 'smartTutor.selectedSubjects.v1';
 let searchMode = SEARCH_ENABLED ? 'auto' : 'off';
 let chatMode = STRICT_MODE_ENABLED ? 'normal' : 'normal';
+let selectedSubjects = loadSelectedSubjects();
+let lastSentSubjects = selectedSubjects.slice();
+let pendingSubjectChangeNote = '';
+let pendingSubjectNotice = null;
 
 const chatArea = document.getElementById('chatArea');
 const welcomeScreen = document.getElementById('welcomeScreen');
@@ -124,6 +148,10 @@ const modeTriggerValue = document.getElementById('modeTriggerValue');
 const searchDropdown = document.getElementById('searchDropdown');
 const searchTrigger = document.getElementById('searchTrigger');
 const searchTriggerValue = document.getElementById('searchTriggerValue');
+const subjectsDropdown = document.getElementById('subjectsDropdown');
+const subjectsTrigger = document.getElementById('subjectsTrigger');
+const subjectsTriggerValue = document.getElementById('subjectsTriggerValue');
+const subjectsMenuList = document.getElementById('subjectsMenuList');
 
 marked.setOptions({
   gfm: true,
@@ -218,6 +246,235 @@ function getSourceHostname(url) {
   }
 }
 
+function normalizeSubjects(subjects) {
+  const requested = new Set(
+    Array.isArray(subjects)
+      ? subjects.map(subject => String(subject || '').trim().toLowerCase()).filter(Boolean)
+      : []
+  );
+
+  MANDATORY_SUBJECTS.forEach(subject => requested.add(subject));
+  const normalized = ALLOWED_SUBJECTS.filter(subject => requested.has(subject));
+  return normalized.length ? normalized : ALLOWED_SUBJECTS.slice();
+}
+
+function loadSelectedSubjects() {
+  try {
+    const raw = localStorage.getItem(SUBJECTS_STORAGE_KEY);
+    if (!raw) return ALLOWED_SUBJECTS.slice();
+    return normalizeSubjects(JSON.parse(raw));
+  } catch (_) {
+    return ALLOWED_SUBJECTS.slice();
+  }
+}
+
+function saveSelectedSubjects() {
+  try {
+    localStorage.setItem(SUBJECTS_STORAGE_KEY, JSON.stringify(selectedSubjects));
+  } catch (_) {
+  }
+}
+
+function areSubjectsEqual(a, b) {
+  const left = normalizeSubjects(a);
+  const right = normalizeSubjects(b);
+  return left.length === right.length && left.every((subject, index) => subject === right[index]);
+}
+
+function formatSubjectLabel(subject) {
+  return String(subject || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function buildSubjectsSummary(subjects) {
+  const normalized = normalizeSubjects(subjects);
+  if (normalized.length === ALLOWED_SUBJECTS.length) return 'All subjects';
+  const preview = normalized.slice(0, 2).map(formatSubjectLabel);
+  const remaining = normalized.length - preview.length;
+  return remaining > 0 ? `${preview.join(', ')} + ${remaining}` : preview.join(', ');
+}
+
+function buildSubjectChangeNote(subjects) {
+  return `Allowed subjects updated: ${normalizeSubjects(subjects).map(formatSubjectLabel).join(', ')}.`;
+}
+
+function updateSubjectsTriggerValue() {
+  subjectsTriggerValue.textContent = buildSubjectsSummary(selectedSubjects);
+}
+
+function appendOrUpdateSubjectNotice(text) {
+  if (!text) return;
+  if (pendingSubjectNotice && pendingSubjectNotice.isConnected) {
+    const bubble = pendingSubjectNotice.querySelector('.msg-notice');
+    if (bubble) bubble.textContent = text;
+    return;
+  }
+
+  const row = document.createElement('div');
+  row.className = 'msg-row meta';
+
+  const notice = document.createElement('div');
+  notice.className = 'msg-notice';
+  notice.textContent = text;
+
+  row.appendChild(notice);
+  messageList.appendChild(row);
+  pendingSubjectNotice = row;
+  scrollToBottom(true);
+}
+
+function handleSubjectsUpdated(nextSubjects) {
+  selectedSubjects = normalizeSubjects(nextSubjects);
+  saveSelectedSubjects();
+  updateSubjectsTriggerValue();
+  renderSubjectsMenu();
+
+  if (areSubjectsEqual(selectedSubjects, lastSentSubjects)) {
+    pendingSubjectChangeNote = '';
+    if (pendingSubjectNotice && pendingSubjectNotice.isConnected) {
+      pendingSubjectNotice.remove();
+    }
+    pendingSubjectNotice = null;
+    if (messageList.childElementCount === 0) {
+      showWelcomeScreen();
+    }
+    return;
+  }
+
+  pendingSubjectChangeNote = buildSubjectChangeNote(selectedSubjects);
+  hideWelcomeScreen();
+  appendOrUpdateSubjectNotice(pendingSubjectChangeNote);
+}
+
+function toggleSubject(subject, checked) {
+  if (MANDATORY_SUBJECTS.includes(subject)) return;
+
+  const nextSubjects = new Set(selectedSubjects);
+  if (checked) {
+    nextSubjects.add(subject);
+  } else {
+    nextSubjects.delete(subject);
+  }
+  handleSubjectsUpdated(Array.from(nextSubjects));
+}
+
+function setAllSubjects(enabled) {
+  handleSubjectsUpdated(enabled ? ALLOWED_SUBJECTS : MANDATORY_SUBJECTS);
+}
+
+function renderSubjectsMenu() {
+  if (!subjectsMenuList) return;
+
+  const normalized = normalizeSubjects(selectedSubjects);
+  const allSelected = normalized.length === ALLOWED_SUBJECTS.length;
+
+  const renderRow = ({ subject, label, checked, locked = false, isAll = false }) => `
+    <label class="subject-option${locked ? ' is-locked' : ''}${isAll ? ' is-all' : ''}">
+      <span class="subject-option-control">
+        <input
+          class="subject-option-checkbox"
+          type="checkbox"
+          ${checked ? 'checked' : ''}
+          ${locked ? 'disabled' : ''}
+          data-subject="${escapeHtml(subject)}"
+          ${isAll ? 'data-role="all"' : ''}
+        >
+        <span class="subject-option-box" aria-hidden="true"></span>
+      </span>
+      <span class="subject-option-copy">
+        <span class="subject-option-name">${escapeHtml(label)}</span>
+        ${locked ? '<span class="subject-option-tag">Required</span>' : ''}
+      </span>
+    </label>
+  `;
+
+  subjectsMenuList.innerHTML = [
+    renderRow({ subject: 'all', label: 'All subjects', checked: allSelected, isAll: true }),
+    ...ALLOWED_SUBJECTS.map(subject => renderRow({
+      subject,
+      label: formatSubjectLabel(subject),
+      checked: normalized.includes(subject),
+      locked: MANDATORY_SUBJECTS.includes(subject),
+    })),
+  ].join('');
+
+  subjectsMenuList.querySelectorAll('.subject-option-checkbox').forEach(input => {
+    input.addEventListener('change', event => {
+      const target = event.currentTarget;
+      if (target.dataset.role === 'all') {
+        setAllSubjects(target.checked);
+        return;
+      }
+      toggleSubject(target.dataset.subject, target.checked);
+    });
+  });
+}
+
+async function copyText(text) {
+  const value = String(text || '');
+  if (!value) return false;
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (_) {
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  try {
+    return document.execCommand('copy');
+  } catch (_) {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function createMessageActions(role, getCopyText) {
+  const actions = document.createElement('div');
+  actions.className = `msg-actions ${role}`;
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'msg-action-btn';
+  copyButton.innerHTML = `
+    <span class="msg-action-icon" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <rect x="5.25" y="3.25" width="7.5" height="9.5" rx="2" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M3.75 10.25C2.92157 10.25 2.25 9.57843 2.25 8.75V4.75C2.25 3.92157 2.92157 3.25 3.75 3.25H7.25" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+    </span>
+    <span class="msg-action-label">Copy</span>
+  `;
+
+  copyButton.addEventListener('click', async () => {
+    const text = typeof getCopyText === 'function' ? getCopyText() : '';
+    const didCopy = await copyText(text);
+    const label = copyButton.querySelector('.msg-action-label');
+    if (!label) return;
+    label.textContent = didCopy ? 'Copied' : 'Copy failed';
+    copyButton.classList.toggle('is-copied', didCopy);
+    window.clearTimeout(copyButton._copyTimer);
+    copyButton._copyTimer = window.setTimeout(() => {
+      label.textContent = 'Copy';
+      copyButton.classList.remove('is-copied');
+    }, 1600);
+  });
+
+  actions.appendChild(copyButton);
+  return { actions, copyButton };
+}
+
 function setChatMode(mode) {
   chatMode = mode === 'strict' && STRICT_MODE_ENABLED ? 'strict' : 'normal';
   const descriptions = {
@@ -272,6 +529,7 @@ function setDropdownOpen(dropdown, open) {
 function closeAllDropdowns() {
   setDropdownOpen(modeDropdown, false);
   setDropdownOpen(searchDropdown, false);
+  setDropdownOpen(subjectsDropdown, false);
 }
 
 function isNearBottom() {
@@ -309,6 +567,7 @@ function appendMessage(role, text) {
 
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
+  bubble.dataset.rawText = text || '';
 
   if (role === 'bot' && ENABLE_BOT_MARKDOWN_LATEX) {
     renderMarkdownAndMath(text, bubble);
@@ -316,7 +575,9 @@ function appendMessage(role, text) {
     bubble.textContent = text;
   }
 
+  const { actions } = createMessageActions(role, () => bubble.dataset.rawText || '');
   card.appendChild(bubble);
+  card.appendChild(actions);
   row.appendChild(card);
   messageList.appendChild(row);
   scrollToBottom(true);
@@ -383,6 +644,9 @@ function createStreamingMessage() {
   const content = document.createElement('div');
   content.className = 'streaming-content is-plain is-hidden';
 
+  const { actions, copyButton } = createMessageActions('bot', () => bubble.dataset.rawText || '');
+  actions.classList.add('is-disabled');
+
   const sourcesPanel = document.createElement('div');
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
@@ -392,6 +656,7 @@ function createStreamingMessage() {
   bubble.appendChild(shell);
 
   card.appendChild(bubble);
+  card.appendChild(actions);
   card.appendChild(sourcesPanel);
   row.appendChild(card);
   messageList.appendChild(row);
@@ -404,6 +669,8 @@ function createStreamingMessage() {
     bubble,
     shell,
     content,
+    actions,
+    copyButton,
     inlinePending,
     inlinePendingTitle,
     pendingPanel,
@@ -462,6 +729,9 @@ function createStrictMessage() {
   sourcesPanel.className = 'message-sources';
   sourcesPanel.setAttribute('aria-hidden', 'true');
 
+  const { actions, copyButton } = createMessageActions('bot', () => finalContent.dataset.rawText || '');
+  actions.classList.add('is-hidden');
+
   finalAnswer.appendChild(finalLabel);
   finalAnswer.appendChild(finalContent);
   strictWrap.appendChild(strictHeader);
@@ -470,6 +740,7 @@ function createStrictMessage() {
   strictWrap.appendChild(sourcesPanel);
   bubble.appendChild(strictWrap);
   card.appendChild(bubble);
+  card.appendChild(actions);
   row.appendChild(card);
   messageList.appendChild(row);
 
@@ -485,7 +756,18 @@ function createStrictMessage() {
   });
 
   scrollToBottom(true);
-  return { row, cards, finalAnswer, finalContent, sourcesPanel, trace, finalAnimator, pendingSources: [] };
+  return {
+    row,
+    cards,
+    finalAnswer,
+    finalContent,
+    sourcesPanel,
+    actions,
+    copyButton,
+    trace,
+    finalAnimator,
+    pendingSources: [],
+  };
 }
 
 function renderStrictTrace(container, trace) {
@@ -929,6 +1211,8 @@ function renderSourcesPanel(panel, sources) {
 function animateStrictFinalAnswer(strictState, text, sources) {
   if (!strictState) return;
   strictState.finalAnswer.classList.remove('is-hidden');
+  strictState.finalContent.dataset.rawText = text || '';
+  strictState.actions.classList.remove('is-hidden');
   animateTextIntoState(strictState.finalAnimator, text || '', () => {
     renderSourcesPanel(strictState.sourcesPanel, sources || strictState.pendingSources || []);
     scrollToBottom(true);
@@ -960,6 +1244,8 @@ function finalizeStreamingMessage(streamState) {
   streamState.completed = true;
   streamState.bubble.classList.remove('streaming');
   streamState.bubble.classList.remove('searching');
+  streamState.bubble.dataset.rawText = streamState.rawText;
+  streamState.actions.classList.toggle('is-disabled', !streamState.rawText);
   if (streamState.hasVisibleContent) hideInlinePending(streamState);
   renderStreamingContent(streamState, true);
   renderSources(streamState);
@@ -1063,6 +1349,8 @@ function failStream(streamState, message) {
   streamState.completed = true;
   streamState.searchPending = false;
   streamState.bubble.classList.remove('searching');
+  streamState.bubble.dataset.rawText = message || '';
+  streamState.actions.classList.toggle('is-disabled', !message);
   hidePendingPanel(streamState, true);
   scheduleStreamingFrame(streamState);
 }
@@ -1215,12 +1503,23 @@ async function sendMessage(text) {
   userInput.value = '';
   syncTextareaHeight();
   setLoading(true);
+  const requestPayload = {
+    selected_subjects: normalizeSubjects(selectedSubjects),
+    subject_change_note: pendingSubjectChangeNote || null,
+  };
 
   try {
+    let wasSuccessful = false;
     if (chatMode === 'strict') {
-      await sendStrictMessage(msg);
+      wasSuccessful = await sendStrictMessage(msg, requestPayload);
     } else {
-      await sendStreamingMessage(msg);
+      wasSuccessful = await sendStreamingMessage(msg, requestPayload);
+    }
+
+    if (wasSuccessful) {
+      lastSentSubjects = normalizeSubjects(selectedSubjects);
+      pendingSubjectChangeNote = '';
+      pendingSubjectNotice = null;
     }
   } finally {
     setLoading(false);
@@ -1229,7 +1528,7 @@ async function sendMessage(text) {
   }
 }
 
-async function sendStreamingMessage(msg) {
+async function sendStreamingMessage(msg, requestPayload) {
   const streamState = createStreamingMessage();
   activeStreamController = streamState;
 
@@ -1239,13 +1538,19 @@ async function sendStreamingMessage(msg) {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, search_mode: searchMode, mode: 'normal' }),
+      body: JSON.stringify({
+        message: msg,
+        search_mode: searchMode,
+        mode: 'normal',
+        selected_subjects: requestPayload.selected_subjects,
+        subject_change_note: requestPayload.subject_change_note,
+      }),
       signal: activeRequestController.signal,
     });
 
     if (!res.ok || !res.body) {
       failStream(streamState, '[Error] Could not reach the server.');
-      return;
+      return false;
     }
 
     const reader = res.body.getReader();
@@ -1292,18 +1597,21 @@ async function sendStreamingMessage(msg) {
     }
 
     finishStream(streamState);
+    return true;
   } catch (err) {
     if (err && err.name === 'AbortError') {
       clearQueryRotation(streamState);
       if (streamState.searchRow) streamState.searchRow.remove();
       streamState.row.remove();
+      return false;
     } else {
       failStream(streamState, '[Error] Request failed.');
+      return false;
     }
   }
 }
 
-async function sendStrictMessage(msg) {
+async function sendStrictMessage(msg, requestPayload) {
   const strictState = createStrictMessage();
   activeStreamController = strictState;
 
@@ -1312,7 +1620,13 @@ async function sendStrictMessage(msg) {
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, search_mode: searchMode, mode: 'strict' }),
+      body: JSON.stringify({
+        message: msg,
+        search_mode: searchMode,
+        mode: 'strict',
+        selected_subjects: requestPayload.selected_subjects,
+        subject_change_note: requestPayload.subject_change_note,
+      }),
       signal: activeRequestController.signal,
     });
 
@@ -1364,10 +1678,11 @@ async function sendStrictMessage(msg) {
 
       if (doneReceived) break;
     }
+    return true;
   } catch (err) {
     if (err && err.name === 'AbortError') {
       strictState.row.remove();
-      return;
+      return false;
     }
 
     renderStrictTrace(strictState.cards, [
@@ -1376,6 +1691,7 @@ async function sendStrictMessage(msg) {
       { title: 'Final Audit', status: 'skipped', summary: 'Skipped because the request failed.', decision: 'skipped', duration_ms: 0 },
     ]);
     animateStrictFinalAnswer(strictState, '[Error] Request failed.', []);
+    return false;
   }
 }
 
@@ -1398,6 +1714,7 @@ async function clearChat() {
   await fetch('/api/clear', { method: 'POST' });
   messageList.innerHTML = '';
   activeStreamController = null;
+  pendingSubjectNotice = null;
   showWelcomeScreen();
   userInput.value = '';
   syncTextareaHeight();
@@ -1450,6 +1767,16 @@ if (SEARCH_ENABLED) {
     ? 'Strict reviews first. Search disabled.'
     : 'Normal streams. Search disabled.';
 }
+
+subjectsTrigger.addEventListener('click', event => {
+  event.stopPropagation();
+  const next = !subjectsDropdown.classList.contains('is-open');
+  closeAllDropdowns();
+  setDropdownOpen(subjectsDropdown, next);
+});
+
+renderSubjectsMenu();
+updateSubjectsTriggerValue();
 
 document.addEventListener('click', event => {
   if (!event.target.closest('.toolbar-dropdown')) {

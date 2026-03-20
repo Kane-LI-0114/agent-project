@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from config.settings import STRICT_REFUSAL_MESSAGE
+from config.settings import STRICT_REFUSAL_MESSAGE, normalize_subject_selection
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,57 @@ _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
     ("harmful", r"\bsexual\b|\bporn\b"),
 ]
 
+_SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
+    "geography": [
+        r"\bgeography\b",
+        r"\bmap\b",
+        r"\bclimate\b",
+        r"\bmonsoon\b",
+        r"\blatitude\b",
+        r"\blongitude\b",
+        r"\blandform\b",
+    ],
+    "finance": [
+        r"\bfinance\b",
+        r"\bstock\b",
+        r"\bbond\b",
+        r"\bportfolio\b",
+        r"\bdividend\b",
+        r"\binterest rate\b",
+        r"\bnet present value\b",
+    ],
+    "economics": [
+        r"\beconomics\b",
+        r"\beconomic\b",
+        r"\binflation\b",
+        r"\bgdp\b",
+        r"\bsupply\b",
+        r"\bdemand\b",
+        r"\bopportunity cost\b",
+        r"\belasticity\b",
+    ],
+    "philosophy": [
+        r"\bphilosophy\b",
+        r"\bethics\b",
+        r"\bmetaphysics\b",
+        r"\bepistemology\b",
+        r"\bplato\b",
+        r"\baristotle\b",
+        r"\butilitarianism\b",
+    ],
+    "chemistry": [
+        r"\bchemistry\b",
+        r"\bchemical\b",
+        r"\batom\b",
+        r"\bmolecule\b",
+        r"\breaction\b",
+        r"\bstoichiometry\b",
+        r"\bperiodic table\b",
+        r"\bacid\b",
+        r"\bbase\b",
+    ],
+}
+
 
 @dataclass
 class InputGuardResult:
@@ -246,7 +297,40 @@ def _find_rule_matches(text: str) -> list[str]:
     return sorted(set(matches))
 
 
-def prefilter_input(user_input: str) -> InputGuardResult:
+def detect_out_of_scope_subjects(
+    text: str,
+    allowed_subjects: List[str] | None = None,
+) -> list[str]:
+    """
+    Return clearly detected disabled optional subjects referenced in *text*.
+
+    This is intentionally conservative: it only flags subject scope mismatches
+    when the message clearly points at a disabled optional subject and does not
+    also clearly mention any currently enabled subject.
+    """
+    if allowed_subjects is None:
+        return []
+
+    normalized_allowed = set(normalize_subject_selection(allowed_subjects))
+    matched_subjects = {
+        subject
+        for subject, patterns in _SUBJECT_SCOPE_PATTERNS.items()
+        if any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+    }
+    if not matched_subjects:
+        return []
+
+    disabled_matches = sorted(subject for subject in matched_subjects if subject not in normalized_allowed)
+    enabled_matches = sorted(subject for subject in matched_subjects if subject in normalized_allowed)
+    if disabled_matches and not enabled_matches:
+        return disabled_matches
+    return []
+
+
+def prefilter_input(
+    user_input: str,
+    allowed_subjects: List[str] | None = None,
+) -> InputGuardResult:
     """Run local layered filtering before any LLM-based review."""
     raw_text = user_input.strip()
     if not raw_text:
@@ -276,6 +360,18 @@ def prefilter_input(user_input: str) -> InputGuardResult:
         return InputGuardResult(
             allowed=True,
             normalized_input=normalized_text,
+            encoding=encoding,
+        )
+
+    out_of_scope_subjects = detect_out_of_scope_subjects(normalized_text, allowed_subjects)
+    if out_of_scope_subjects:
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="out_of_scope",
+            stage="prefilter",
+            matched_rules=out_of_scope_subjects,
             encoding=encoding,
         )
 
