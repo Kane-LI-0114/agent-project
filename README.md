@@ -1,91 +1,376 @@
 # CSIT5900 SmartTutor – Multi-turn Homework Tutoring Agent
 
-A production-ready, multi-turn homework tutoring AI agent built for the HKUST CSIT5900 2025-26 Spring Semester Course Project. The agent uses LLM as its core engine with strict guardrails, conversation memory, and academic-level adaptation.
+This repository contains the **current full SmartTutor project** for the HKUST CSIT5900 2025–26 Spring course project.
 
-## Features
+**Recommended entry point:** use the **web UI** in `webui.py`. It is the primary interface, exposes the most complete user experience, and is the best way to demonstrate the project. The CLI in `demo.py` is still included as a secondary terminal-based alternative.
 
-- **Multi-Subject Support** – Math and History homework tutoring (mandatory), with optional coverage for Geography, Finance, Economics, Philosophy, Chemistry.
-- **Dual Guardrails** – Code-level pre-check (regex/heuristic) + LLM system-prompt enforcement to reject non-homework or off-subject inputs.
-- **Multi-turn Conversation** – Full conversation memory with automatic token-based truncation to prevent context window overflow.
-- **Academic Level Adaptation** – Adjusts answer depth based on the user's stated academic background.
-- **Conversation Summary** – Generates summaries of the entire dialog history on request.
-- **Practice Exercise Generation** – Creates targeted practice questions for specified subjects and levels.
-- **Optional Live Search** – Adds LLM-assisted query optimization plus free-source retrieval from DuckDuckGo, Wikipedia, OpenAlex, arXiv, PubMed, and configurable knowledge pages for fresher factual answers when automatic search is enabled.
-- **Dual API Backends** – Azure OpenAI API (project submission) and One API (OpenAI-compatible, self-testing), switchable via a single config toggle.
-- **CLI Demo Interface** – Built-in demo shortcuts plus runtime controls for strict mode and search mode.
+---
 
-## Project Structure
+## What this project includes
 
-```
-├── .env.example              # Environment variable template
-├── requirements.txt          # Python dependencies
-├── README.md                 # This file
-├── config/
-│   ├── __init__.py
-│   └── settings.py           # API configuration, guardrails rules, subject settings
-├── core/
-│   ├── __init__.py
-│   ├── conversation.py       # Conversation memory & context management
-│   ├── guardrails.py         # Input classification & guardrails logic
-│   ├── response_handler.py   # Response generation & formatting
-│   └── search.py             # Free-source retrieval and knowledge-page scraping
-├── llm/
-│   ├── __init__.py           # Factory function for LLM client selection
-│   ├── base_client.py        # Abstract base class for LLM clients
-│   ├── azure_client.py       # Azure OpenAI API implementation
-│   └── oneapi_client.py      # One API (OpenAI-compatible) implementation
-├── demo.py                   # Main CLI demo entry point (modular version)
-├── webui.py                  # FastAPI web UI and chat API
-├── start.sh                  # Convenience launcher for the web UI
-├── templates/
-│   └── index.html            # Frontend chat interface
-└── agent-home-work-azure.py  # Original reference implementation
-```
+SmartTutor is a production-style homework tutoring agent with:
 
-## Prerequisites
+- **Multi-turn conversation memory** with token-aware history truncation
+- **Homework-only guardrails** for in-scope subject filtering and refusal handling
+- **Normal mode** and **Strict mode** response pipelines
+- **Web UI with streaming replies** and visible strict-mode stage cards
+- **Optional live search** with source review before evidence is shown or passed to generation
+- **Academic level adaptation** based on user statements
+- **Conversation summary** and **practice exercise generation**
+- **Follow-up suggestion chips** in the web UI
+- **Two interchangeable LLM backends**: Azure OpenAI and One API (OpenAI-compatible)
+- **Automated unit tests** for guardrails, response handling, and search filtering
 
-- Python 3.10+
-- An Azure OpenAI resource with a deployed model **OR** a One API endpoint
+Supported subjects:
 
-## Setup
+- **Mandatory:** Math, History
+- **Optional:** Geography, Finance, Economics, Philosophy, Chemistry
 
-### 1. Clone and install dependencies
+---
+
+## Recommended usage: Web UI first
+
+> If you only use one interface, use **`webui.py`**.
+
+### 1. Prepare the environment
+
+If you use the repository's Conda environment:
 
 ```bash
-cd agent-project
+conda activate agent-project
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment variables
+Create local environment variables:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your credentials:
+Fill in `.env` with either:
 
-**For Azure OpenAI (project submission):**
+- **Azure OpenAI** credentials, or
+- **One API** credentials
+
+Minimum required configuration:
+
 ```dotenv
+LLM_BACKEND=azure
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 AZURE_OPENAI_API_VERSION=2024-08-01-preview
-LLM_BACKEND=azure
 ```
 
-**For One API (self-testing):**
+Or:
+
 ```dotenv
+LLM_BACKEND=oneapi
 ONEAPI_API_KEY=your-key
 ONEAPI_BASE_URL=https://your-endpoint/v1
-LLM_BACKEND=oneapi
 ```
 
-Current code defaults in [config/settings.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/config/settings.py):
-- Azure deployment name: `gpt-4o`
-- One API model name: `DeepSeek-V3.2`
+### 2. Start the web UI
 
-If you want to change either default, update [config/settings.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/config/settings.py) directly.
+```bash
+python webui.py
+```
 
-Optional search-related environment variables:
+Then open:
+
+- [http://localhost:8000](http://localhost:8000)
+
+You can also use the shortcut:
+
+```bash
+./start.sh
+```
+
+`start.sh` simply runs `python webui.py`.
+
+### 3. Why the web UI is the recommended way to use SmartTutor
+
+The web UI exposes the richest version of the project:
+
+- **Streaming assistant replies**
+- **Normal / Strict mode switch**
+- **Auto / On / Off search switch**
+- **Allowed subjects selector** with Math and History always enabled
+- **Starter prompt cards** for quick demo use
+- **Visible strict-mode review pipeline** with stage-by-stage status
+- **Sources drawer** for inspected search results
+- **Follow-up suggestion chips** after each answer
+- **Markdown + LaTeX rendering** for assistant responses
+- **New chat reset** from the UI
+
+### 4. How to use the web UI
+
+1. Open the homepage.
+2. Ask a homework question, or click a starter prompt.
+3. Optionally switch:
+   - **Mode**: `Normal` or `Strict`
+   - **Search**: `Auto`, `On`, or `Off`
+   - **Subjects**: enable or disable optional subjects
+4. Read the streamed reply.
+5. If search was used, open the **Sources** button to inspect retrieved summaries.
+6. Click a follow-up chip to continue the conversation.
+7. Use **New chat** to clear history.
+
+### 5. Web API endpoints used by the UI
+
+`webui.py` also exposes these endpoints:
+
+- `GET /` – main HTML interface
+- `POST /api/chat` – non-streaming chat response
+- `POST /api/chat/stream` – streaming SSE chat response
+- `POST /api/followups` – generate/regenerate follow-up suggestions
+- `POST /api/clear` – clear conversation history
+- `GET /api/demos` – starter prompts for the frontend
+
+### 6. Notes for first-time startup
+
+- If the frontend loads but the backend is not configured, the page still opens.
+- Chat requests will return a **clear configuration error** until `.env` is completed.
+
+---
+
+## Secondary usage: CLI demo (`demo.py`)
+
+Use the CLI mainly for:
+
+- quick terminal-only demos
+- manual regression checks
+- comparing normal vs strict behavior without the browser
+
+### Run the CLI
+
+```bash
+python demo.py
+```
+
+### CLI controls
+
+| Command | Meaning |
+|---|---|
+| `demo-math` | Valid math question |
+| `demo-history` | Valid history question |
+| `demo-geography` | Valid geography question |
+| `demo-reject1` | Non-homework travel request |
+| `demo-reject2` | Local institutional trivia / off-scope history-like request |
+| `demo-summary` | Conversation summary request |
+| `demo-level` | Academic level statement |
+| `demo-exercise` | Practice exercise generation |
+| `subjects` | Review or change allowed subject scope |
+| `mode normal` | Use normal mode |
+| `mode strict` | Use strict mode |
+| `search auto` | Search only when needed |
+| `search on` | Always search |
+| `search off` | Disable search |
+| `status` | Show current mode/search state |
+| `clear` | Clear conversation history |
+| `exit` / `quit` | Leave the program |
+
+The CLI and the web UI share the same core tutoring logic, subject-scope logic, search service, and guardrails.
+
+---
+
+## Project structure (current repository)
+
+The tree below covers the maintained source files and support files in the current project. Generated caches, Git metadata, local IDE settings, and local secrets such as `.env` are intentionally not documented here as project source.
+
+```text
+.
+├── .env.example                 # Environment-variable template
+├── AGENTS.md                    # Repository-specific coding/contribution instructions
+├── README.md                    # This file
+├── agent-home-work-azure.py     # Older reference/prototype implementation
+├── config/
+│   ├── __init__.py
+│   └── settings.py              # Central runtime settings, prompts, subjects, feature flags
+├── core/
+│   ├── __init__.py
+│   ├── conversation.py          # Conversation memory and token-based truncation
+│   ├── guardrails.py            # Local input pre-filter and academic-level detection
+│   ├── response_handler.py      # Normal/strict orchestration, summaries, follow-ups
+│   └── search.py                # Optional live search, source normalization, search review
+├── demo.py                      # CLI demo entry point
+├── guidance.md                  # Build/assignment guidance used during project development
+├── llm/
+│   ├── __init__.py              # LLM client factory
+│   ├── azure_client.py          # Azure OpenAI async client with retry logic
+│   ├── base_client.py           # Abstract LLM client interface
+│   └── oneapi_client.py         # One API async client with retry logic
+├── project.pdf                  # Course/project reference document
+├── requirements.txt             # Python dependencies
+├── start.sh                     # Web UI launcher shortcut
+├── static/
+│   ├── favicon.svg              # Browser tab icon
+│   └── index.css                # Web UI styling
+├── templates/
+│   └── index.html               # Web UI HTML + client-side JavaScript
+├── tests/
+│   ├── test_guardrails.py       # Guardrail unit tests
+│   ├── test_response_handler.py # Normal/strict pipeline tests
+│   └── test_search.py           # Search reviewer/filtering tests
+└── webui.py                     # FastAPI app, UI routes, chat API, streaming API
+```
+
+### Main entry points
+
+- **`webui.py`** – recommended main interface
+- **`demo.py`** – terminal-based alternative
+
+### Supporting / legacy files
+
+- **`agent-home-work-azure.py`** – an older prototype kept for reference; it is **not** the main maintained app path
+- **`guidance.md`** – project-building guidance and original requirement prompt
+- **`project.pdf`** – project/course reference material
+
+> Older materials may mention `single_file_demo.py`, but that file is **not part of the current maintained repository**.
+
+---
+
+## Core architecture
+
+### Runtime flow
+
+```text
+Web UI or CLI
+    ↓
+ConversationManager
+    ↓
+Local guardrails / prefilter
+    ↓
+Optional SearchService
+    ↓
+ResponseHandler
+    ├── Normal mode: single answer pipeline
+    └── Strict mode: reviewer → generator → auditor
+    ↓
+Assistant reply + optional sources + follow-up suggestions
+```
+
+### Main modules
+
+#### `config/settings.py`
+Centralizes:
+
+- backend selection
+- subject configuration
+- search settings
+- strict-mode settings
+- system prompts
+- demo prompt definitions
+- follow-up suggestion prompt templates
+
+#### `core/conversation.py`
+Handles:
+
+- stored message history
+- token counting with `tiktoken`
+- hard turn limits
+- academic-level state
+- conversation reset
+
+#### `core/guardrails.py`
+Implements the local pre-filter that can reject requests before the LLM call. It includes checks for:
+
+- empty input
+- base64 / rot13 / morse normalization
+- jailbreak and prompt-exfiltration attempts
+- disguised service requests
+- clearly out-of-scope subjects
+- local institutional / organizational trivia disguised as history
+- harmful or cheating-style requests
+- academic-level statements
+- conversation-summary requests
+
+#### `core/response_handler.py`
+Coordinates the full response pipeline:
+
+- normal mode request handling
+- strict mode reviewer / generator / auditor flow
+- local handling of academic-level and summary requests
+- follow-up suggestion generation
+- streaming support for the web UI
+
+#### `core/search.py`
+Provides optional live search with source normalization and filtering. The current implementation can combine:
+
+- DuckDuckGo Instant Answer API
+- Wikipedia
+- OpenAlex
+- arXiv
+- PubMed
+- configured knowledge pages
+
+Before sources are used, the project can optionally:
+
+- generate query variants with a dedicated query-optimizer model
+- filter retrieved evidence with a dedicated search-reviewer model
+
+#### `llm/`
+Provides a backend abstraction so the same tutoring logic can run on:
+
+- **Azure OpenAI**
+- **One API** (OpenAI-compatible)
+
+Both client implementations support async chat calls and streaming.
+
+#### `templates/index.html` + `static/index.css`
+Together they implement the complete frontend, including:
+
+- streaming chat UI
+- strict-mode stage cards
+- subject selector
+- source drawer
+- follow-up chips
+- starter prompt rotation
+- Markdown/LaTeX rendering
+
+---
+
+## Configuration reference
+
+### Required backend settings
+
+Use one backend:
+
+#### Azure OpenAI
+
+```dotenv
+LLM_BACKEND=azure
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-08-01-preview
+```
+
+#### One API
+
+```dotenv
+LLM_BACKEND=oneapi
+ONEAPI_API_KEY=your-key
+ONEAPI_BASE_URL=https://your-endpoint/v1
+```
+
+### Important model-name note
+
+The **current default main-model names** are set directly in `config/settings.py`:
+
+- Azure default deployment: `gpt-4o`
+- One API default model: `DeepSeek-V3.2`
+
+If you want to change the **main default role** model, edit `config/settings.py`.
+
+Role-specific overrides such as `QUERY_OPTIMIZER_*`, `SEARCH_REVIEWER_*`, `FOLLOWUP_*`, and `STRICT_*` are read from environment variables.
+
+### Optional search settings
+
+Supported by the current codebase:
 
 ```dotenv
 SEARCH_ENABLED=true
@@ -103,6 +388,29 @@ SEARCH_REVIEWER_MAX_TOKENS=512
 SEARCH_REVIEWER_TIMEOUT_SECONDS=20
 SEARCH_MAX_MERGED_SOURCES=12
 SEARCH_MAX_SOURCES_PER_QUERY=6
+```
+
+### Optional strict-mode settings
+
+Supported by the current codebase:
+
+```dotenv
+STRICT_MODE_ENABLED=true
+STRICT_REVIEWER_AZURE_DEPLOYMENT_NAME=gpt-4o
+STRICT_REVIEWER_ONEAPI_MODEL_NAME=gpt-4o
+STRICT_REVIEWER_TIMEOUT_SECONDS=30
+STRICT_GENERATOR_AZURE_DEPLOYMENT_NAME=gpt-4o
+STRICT_GENERATOR_ONEAPI_MODEL_NAME=gpt-4o
+STRICT_GENERATOR_TIMEOUT_SECONDS=60
+STRICT_AUDITOR_AZURE_DEPLOYMENT_NAME=gpt-4o
+STRICT_AUDITOR_ONEAPI_MODEL_NAME=gpt-4o
+STRICT_AUDITOR_TIMEOUT_SECONDS=30
+STRICT_MAX_GENERATION_ATTEMPTS=3
+```
+
+### Optional follow-up suggestion settings
+
+```dotenv
 FOLLOWUP_AZURE_DEPLOYMENT_NAME=gpt-4o
 FOLLOWUP_ONEAPI_MODEL_NAME=gpt-4o
 FOLLOWUP_TEMPERATURE=0.3
@@ -110,121 +418,69 @@ FOLLOWUP_MAX_TOKENS=256
 FOLLOWUP_SUGGESTER_TIMEOUT_SECONDS=15
 ```
 
-`SEARCH_KNOWLEDGE_PAGES_JSON` should be a JSON array. Each item needs `name`, `url`, and `keywords`.
-The optional `SEARCH_REVIEWER_*` overrides control the LLM that filters retrieved search sources before they are sent to answer generation or shown in the UI.
-The optional `FOLLOWUP_*` overrides control the dedicated model used to generate the first two post-reply suggestion chips in the web UI.
+---
 
-### 3. Run the demo
+## Testing and verification
 
-**Modular version** (recommended):
+The repository now includes automated tests under `tests/`.
+
+### Run unit tests
+
 ```bash
+python -m unittest discover -s tests -v
+```
+
+### Quick syntax check
+
+```bash
+python -m compileall .
+```
+
+### Manual checks
+
+At minimum, verify that both entry points start cleanly:
+
+```bash
+python webui.py
 python demo.py
 ```
 
-**Web UI**:
-```bash
-python webui.py
-```
+### What the tests currently cover
 
-You can also start the web UI with:
-```bash
-./start.sh
-```
+- local guardrail decisions
+- encoded / obfuscated unsafe-input rejection
+- normal-mode refusal-before-generation behavior
+- strict-mode fail-closed behavior
+- multi-turn summary handling
+- follow-up practice request handling
+- search reviewer filtering before UI/generation exposure
 
-If the LLM backend is not configured yet, the web page can still load, but chat requests will return a clear configuration error until `.env` is completed.
+---
 
-`single_file_demo.py` has been removed because it duplicated the modular implementation and was no longer maintained alongside the main entry points.
+## Built-in demo prompts and expected scenarios
 
-## Demo / Web UI Alignment
+The project includes built-in prompts for the core course-report scenarios:
 
-Both [demo.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/demo.py) and [webui.py](/Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/webui.py) support the same core controls:
+1. **Valid Math** – `Is square root of 1000 a rational number?`
+2. **Valid History** – `Who was the first president of France?`
+3. **Invalid Non-homework** – `I need to travel to London from Hong Kong. What is the best way?`
+4. **Invalid Off-scope History-like Query** – `Who was the first president of Hong Kong University of Science and Technology in Hong Kong?`
+5. **Conversation Summary** – `Can you summarise our conversation so far?`
+6. **Academic Level** – `I'm a university year one student, provide your answers accordingly.`
+7. **Practice Exercises** – `I want to practice calculus for my final in math101, can you give me a few exercises?`
+8. **Geography Support** – `What causes monsoon climates?`
 
-- `Normal Mode` and `Strict Mode`
-- `Auto Search`, `Search On`, and `Search Off`
-- the same demo prompt set
-- conversation clearing / reset
+---
 
-In the CLI, use:
+## Notes for contributors
 
-```bash
-mode normal
-mode strict
-search auto
-search on
-search off
-status
-```
+- Keep secrets in `.env`, never in committed source files.
+- Update both `.env.example` and the README when new configuration is added.
+- Keep new modules close to the feature they extend.
+- Do not edit generated `__pycache__` files.
 
-## Demo Shortcuts
+---
 
-Type any of these keywords at the prompt to trigger built-in test cases:
+## License / usage
 
-| Shortcut        | Test Case                                                                 |
-|-----------------|---------------------------------------------------------------------------|
-| `demo-math`     | Valid math question: *Is square root of 1000 a rational number?*           |
-| `demo-history`  | Valid history question: *Who was the first president of France?*            |
-| `demo-geography`| Valid geography question: *What causes monsoon climates?*                    |
-| `demo-reject1`  | Non-homework rejection: *I need to travel to London from Hong Kong...*     |
-| `demo-reject2`  | Off-subject rejection: *Who was the first president of HKUST?*             |
-| `demo-summary`  | Conversation summary: *Can you summarise our conversation so far?*         |
-| `demo-level`    | Academic level: *I'm a university year one student...*                     |
-| `demo-exercise` | Practice exercises: *I want to practice calculus for my final in math101...* |
-| `mode normal`   | Switch CLI to the normal response pipeline                                 |
-| `mode strict`   | Switch CLI to the strict reviewed pipeline                                 |
-| `search auto`   | Enable automatic search                                                    |
-| `search on`     | Force search for every request                                             |
-| `search off`    | Disable search                                                             |
-| `status`        | Show current CLI mode/search settings                                      |
-| `clear`         | Clear conversation history and start fresh                                 |
-| `exit` / `quit` | Exit the program                                                           |
-
-## Test Cases (for Project Report)
-
-The agent has been tested against the following mandatory examples:
-
-1. **Valid Math** – `Is square root of 1000 a rational number?` → Correct academic answer
-2. **Valid History** – `Who was the first president of France?` → Concise historical answer
-3. **Invalid (Non-homework)** – `I need to travel to London from Hong Kong...` → Rejected with reason
-4. **Invalid (Off-subject)** – `Who was the first president of HKUST?` → Rejected with reason
-5. **Conversation Summary** – `Can you summarise our conversation so far?` → Complete summary
-6. **Academic Level** – `I'm a university year one student...` → Acknowledged, answers adapted
-7. **Practice Exercises** – `I want to practice calculus for my final in math101...` → Generated exercises
-8. **Geography Support** – Geography homework questions are now treated as in-scope subject requests
-9. **Multi-turn Follow-up** – Follow-up questions maintain context coherence
-
-## Architecture
-
-```
-User Input
-    │
-    ▼
-┌─────────────────┐
-│  Code Guardrail │──── reject obvious non-homework ───▶ Rejection Message
-│  (regex/heuristic)│
-└────────┬────────┘
-         │ pass
-         ▼
-┌─────────────────┐
-│ Conversation    │  ◄── add user message
-│ Manager         │  ◄── build message list (system + history)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ LLM Client      │  Azure OpenAI / One API
-│ (with retry)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ LLM Guardrail   │  System prompt enforces subject/homework rules
-│ (system prompt) │
-└────────┬────────┘
-         │
-         ▼
-    Response to User
-```
-
-## License
-
-This project is for academic purposes (HKUST CSIT5900 2025-26 Spring).
+This project is maintained for **academic use** in the HKUST CSIT5900 2025–26 Spring course context.

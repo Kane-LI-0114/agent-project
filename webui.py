@@ -155,7 +155,7 @@ async def chat(req: ChatRequest):
         sources=payload.sources,
         mode=payload.mode,
         strict_trace=payload.strict_trace,
-        follow_up_suggestions=payload.follow_up_suggestions,
+        follow_up_suggestions=payload.follow_up_suggestions or [],
     )
 
 
@@ -261,7 +261,7 @@ async def favicon():
 # Serve the frontend
 # --------------------------------------------------------------------------- #
 @app.get("/", response_class=HTMLResponse)
-async def index():
+async def index() -> str:
     html_path = Path(__file__).parent / "templates" / "index.html"
     html = html_path.read_text(encoding="utf-8")
     html = html.replace(
@@ -284,7 +284,7 @@ async def index():
         "__MANDATORY_SUBJECTS__",
         json.dumps(MANDATORY_SUBJECTS, ensure_ascii=False),
     )
-    return HTMLResponse(html)
+    return html
 
 
 # --------------------------------------------------------------------------- #
