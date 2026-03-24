@@ -85,17 +85,37 @@ _LIFE_PATTERNS: List[str] = [
     r"\bflight\b",
     r"\bhotel\b",
     r"\brestaurant\b",
-    r"\brecipe\b",
-    r"\bcooking\b",
     r"\bweather\b",
     r"\bmovie\b",
+    r"\bmovies\b",
     r"\bgame\b",
+    r"\bgames\b",
     r"\bsport score\b",
     r"\bshopping\b",
-    r"\bbuy\b.*\bonline\b",
     r"\bdating\b",
+    r"旅游",
+    r"机票",
+    r"酒店",
+    r"餐厅",
+    r"天气",
+    r"电影",
+    r"游戏",
+    r"购物",
+    r"约会",
+]
+
+_UNAMBIGUOUS_NON_HOMEWORK_PATTERNS: List[str] = [
     r"\bjoke\b",
     r"\btell me a joke\b",
+    r"\brecipe\b",
+    r"\bcooking\b",
+    r"\bbuy\b.*\bonline\b",
+    r"笑话",
+    r"段子",
+    r"菜谱",
+    r"食谱",
+    r"做饭",
+    r"网购",
 ]
 
 _LIFE_SERVICE_INTENT_PATTERNS: List[str] = [
@@ -105,7 +125,6 @@ _LIFE_SERVICE_INTENT_PATTERNS: List[str] = [
     r"\bbook\b",
     r"\bbooking\b",
     r"\bitinerary\b",
-    r"\broute\b",
     r"\bnext week\b",
     r"\btomorrow\b",
     r"\bthis weekend\b",
@@ -114,6 +133,138 @@ _LIFE_SERVICE_INTENT_PATTERNS: List[str] = [
     r"\brecommend\b",
     r"\breservation\b",
     r"\bticket\b",
+    r"\bforecast\b",
+    r"\bnear me\b",
+    r"\bfor me\b",
+    r"\bplan\b",
+    r"\bstay\b",
+    r"\bstaying\b",
+    r"\bfrom\b.+\bto\b",
+    r"最便宜",
+    r"怎么去",
+    r"怎么走",
+    r"订",
+    r"预订",
+    r"推荐",
+    r"行程",
+    r"票价",
+    r"天气预报",
+    r"附近",
+]
+
+_PERSONAL_CONTEXT_PATTERNS: List[str] = [
+    r"\bi need to\b",
+    r"\bi want to\b",
+    r"\bhelp me\b",
+    r"\bmy trip\b",
+    r"\bmy vacation\b",
+    r"\bmy holiday\b",
+    r"\bnear me\b",
+    r"\bthis weekend\b",
+    r"\bnext week\b",
+    r"\btomorrow\b",
+    r"我想",
+    r"我要",
+    r"帮我",
+    r"给我",
+    r"附近",
+    r"明天",
+    r"下周",
+    r"周末",
+]
+
+_ACADEMIC_INTENT_PATTERNS: List[str] = [
+    r"\bexplain\b",
+    r"\bcompare\b",
+    r"\bdefine\b",
+    r"\bwhat is\b",
+    r"\bwhat are\b",
+    r"\bwhy\b",
+    r"\bhow does\b",
+    r"\bhow did\b",
+    r"\bcalculate\b",
+    r"\bderive\b",
+    r"\bprove\b",
+    r"\banaly[sz]e\b",
+    r"\bdiscuss\b",
+    r"\bdescribe\b",
+    r"\bdifference between\b",
+    r"\brelationship between\b",
+    r"\brole of\b",
+    r"\bimpact of\b",
+    r"\bsignificance of\b",
+    r"解释",
+    r"比较",
+    r"定义",
+    r"什么是",
+    r"为什么",
+    r"如何",
+    r"计算",
+    r"推导",
+    r"证明",
+    r"分析",
+    r"讨论",
+    r"描述",
+    r"区别",
+    r"关系",
+    r"作用",
+    r"影响",
+]
+
+_HISTORICAL_FRAMING_PATTERNS: List[str] = [
+    r"\bhistory\b",
+    r"\bhistorical\b",
+    r"\bduring\b",
+    r"\bafter\b",
+    r"\bbefore\b",
+    r"\bcentury\b",
+    r"\bwar\b",
+    r"\brevolution\b",
+    r"\bempire\b",
+    r"\brepublic\b",
+    r"\bdynasty\b",
+    r"\bcold war\b",
+    r"\bworld war\b",
+    r"\bpostwar\b",
+    r"\bancient\b",
+    r"\bmedieval\b",
+    r"\bmodern\b",
+    r"\bcolonial\b",
+    r"\bpolitical\b",
+    r"\bpropaganda\b",
+    r"\bmovement\b",
+    r"\bsilk road\b",
+    r"\bhistor(?:y|ical)\s+significance\b",
+    r"历史",
+    r"战争",
+    r"革命",
+    r"帝国",
+    r"共和国",
+    r"朝代",
+    r"冷战",
+    r"战后",
+    r"古代",
+    r"中世纪",
+    r"近代",
+    r"殖民",
+    r"宣传",
+]
+
+_BROADER_HISTORY_ANALYSIS_PATTERNS: List[str] = [
+    r"\bimpact\b",
+    r"\binfluence\b",
+    r"\bsignificance\b",
+    r"\brole\b",
+    r"\bshape(?:d)?\b",
+    r"\baffect(?:ed)?\b",
+    r"\bcontext\b",
+    r"\bdevelopment\b",
+    r"\bchange over time\b",
+    r"影响",
+    r"意义",
+    r"作用",
+    r"塑造",
+    r"发展",
 ]
 
 _HOMEWORK_PATTERNS: List[str] = [
@@ -161,6 +312,37 @@ _HOMEWORK_PATTERNS: List[str] = [
     r"\bformula\b",
     r"\bprobability\b",
     r"\bstatistics\b",
+    r"\bcompare\b",
+    r"\banaly[sz]e\b",
+    r"\bdiscuss\b",
+    r"\bdescribe\b",
+    r"\bdifference between\b",
+    r"\brelationship between\b",
+    r"\bimpact\b",
+    r"\bsignificance\b",
+    r"\bgame theory\b",
+    r"\bnash equilibrium\b",
+    r"作业",
+    r"考试",
+    r"练习",
+    r"解释",
+    r"证明",
+    r"计算",
+    r"推导",
+    r"比较",
+    r"分析",
+    r"讨论",
+    r"描述",
+    r"什么是",
+    r"为什么",
+    r"如何",
+    r"数学",
+    r"历史",
+    r"地理",
+    r"金融",
+    r"经济",
+    r"哲学",
+    r"化学",
 ]
 
 _EXPLICIT_ACADEMIC_CUE_PATTERNS: List[str] = [
@@ -180,6 +362,15 @@ _EXPLICIT_ACADEMIC_CUE_PATTERNS: List[str] = [
     r"\bprofessor\b",
     r"\btutor(?:ing)?\b",
     r"\bsubject\b",
+    r"作业",
+    r"课程",
+    r"课堂",
+    r"考试",
+    r"练习",
+    r"老师",
+    r"教授",
+    r"学生",
+    r"辅导",
 ]
 
 _META_PATTERNS: List[str] = [
@@ -190,6 +381,8 @@ _META_PATTERNS: List[str] = [
     r"\byear\s*\d+\b.*\bstudent\b",
     r"\bacademic\s*level\b",
     r"\bprovide\s+your\s+answers\s+accordingly\b",
+    r"总结.*(对话|聊天|讨论)",
+    r"(对话|聊天|讨论).*(总结|概括)",
 ]
 
 _CONVERSATION_SUMMARY_PATTERNS: List[str] = [
@@ -197,6 +390,10 @@ _CONVERSATION_SUMMARY_PATTERNS: List[str] = [
     r"\b(conversation|chat|dialog|discussion)\b.*\bsummar(?:ize|ise)\b",
     r"\bwhat\s+have\s+we\s+discussed\b",
     r"\brecap\b.*\b(conversation|chat|discussion)\b",
+    r"总结.*(对话|聊天|讨论)",
+    r"(对话|聊天|讨论).*(总结|概括)",
+    r"我们.*聊了什么",
+    r"回顾.*(对话|聊天|讨论)",
 ]
 
 _ALLOWED_SUBJECT_PATTERNS: List[str] = [
@@ -227,6 +424,21 @@ _ALLOWED_SUBJECT_PATTERNS: List[str] = [
     r"\bperiodic table\b",
     r"\bmolecule\b",
     r"\batom\b",
+    r"数学",
+    r"历史",
+    r"地理",
+    r"气候",
+    r"季风",
+    r"金融",
+    r"经济",
+    r"哲学",
+    r"化学",
+    r"原子",
+    r"分子",
+    r"\bgame theory\b",
+    r"\bnash equilibrium\b",
+    r"博弈论",
+    r"纳什均衡",
 ]
 
 _OUT_OF_SCOPE_SUBJECT_PATTERNS: List[str] = [
@@ -253,6 +465,17 @@ _OUT_OF_SCOPE_SUBJECT_PATTERNS: List[str] = [
     r"\bpsychology\b",
     r"\bsociology\b",
     r"\blaw\b",
+    r"生物",
+    r"物理",
+    r"编程",
+    r"代码",
+    r"计算机",
+    r"文学",
+    r"英语",
+    r"医学",
+    r"心理学",
+    r"社会学",
+    r"法律",
 ]
 
 _ORG_HINT_PATTERNS: List[str] = [
@@ -269,6 +492,32 @@ _ORG_HINT_PATTERNS: List[str] = [
     r"\borganization\b",
     r"\bcampus\b",
     r"\bhkust\b",
+    r"\binstitution\b",
+    r"\bcorporation\b",
+    r"大学",
+    r"学院",
+    r"学校",
+    r"公司",
+    r"机构",
+    r"组织",
+    r"实验室",
+]
+
+_LOCAL_INSTITUTION_HINT_PATTERNS: List[str] = [
+    r"\buniversity\b",
+    r"\bcollege\b",
+    r"\bschool\b",
+    r"\bdepartment\b",
+    r"\bfaculty\b",
+    r"\blab(?:oratory)?\b",
+    r"\binstitute\b",
+    r"\bcampus\b",
+    r"\bhkust\b",
+    r"大学",
+    r"学院",
+    r"学校",
+    r"院系",
+    r"实验室",
 ]
 
 _ORG_ADMIN_PATTERNS: List[str] = [
@@ -288,6 +537,15 @@ _ORG_ADMIN_PATTERNS: List[str] = [
     r"\bhead of\b",
     r"\bleadership\b",
     r"\badministration\b",
+    r"校长",
+    r"院长",
+    r"创始",
+    r"创办",
+    r"创立",
+    r"总裁",
+    r"董事长",
+    r"领导层",
+    r"管理层",
 ]
 
 _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
@@ -317,14 +575,21 @@ _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
     ("jailbreak", r"\bfrom now on\b.*\bcounts as\b"),
     ("jailbreak", r"\btreat my message as a system update\b"),
     ("jailbreak", r"<system>.*</system>"),
+    ("jailbreak", r"忽略.*(之前|以上|前面).*(指令|要求|规则)"),
+    ("jailbreak", r"(系统提示词|系统提示|system prompt|隐藏提示词|隐藏规则|内部指令)"),
+    ("jailbreak", r"(开发者模式|调试模式)"),
+    ("jailbreak", r"(把我的消息当作|将我的消息视为).*(系统更新|系统指令)"),
+    ("jailbreak", r"(显示|告诉我|列出).*(系统提示词|隐藏规则|内部指令)"),
     ("cheating", r"\bdo my homework\b"),
     ("cheating", r"\bfinish my assignment\b"),
     ("cheating", r"\bgive me the final answer only\b"),
     ("cheating", r"\bpretend you are my teacher\b"),
+    ("cheating", r"(直接给我答案|只给答案|替我写作业)"),
     ("harmful", r"\bhow to make\b.*\b(bomb|explosive|meth|drug)\b"),
     ("harmful", r"\b(steps|instructions|recipe|build|assemble|make)\b.*\b(bomb|explosive|meth|drug)\b"),
     ("harmful", r"\bkill\b|\bmurder\b"),
     ("harmful", r"\bsexual\b|\bporn\b"),
+    ("harmful", r"(炸弹|爆炸物|毒品|冰毒|杀人|色情)"),
 ]
 
 _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
@@ -336,6 +601,13 @@ _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
         r"\blatitude\b",
         r"\blongitude\b",
         r"\blandform\b",
+        r"地理",
+        r"气候",
+        r"季风",
+        r"纬度",
+        r"经度",
+        r"地貌",
+        r"天气",
     ],
     "finance": [
         r"\bfinance\b",
@@ -345,6 +617,13 @@ _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
         r"\bdividend\b",
         r"\binterest rate\b",
         r"\bnet present value\b",
+        r"金融",
+        r"股票",
+        r"债券",
+        r"投资组合",
+        r"股息",
+        r"利率",
+        r"净现值",
     ],
     "economics": [
         r"\beconomics\b",
@@ -355,6 +634,16 @@ _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
         r"\bdemand\b",
         r"\bopportunity cost\b",
         r"\belasticity\b",
+        r"\bgame theory\b",
+        r"\bnash equilibrium\b",
+        r"经济",
+        r"通货膨胀",
+        r"供给",
+        r"需求",
+        r"机会成本",
+        r"弹性",
+        r"博弈论",
+        r"纳什均衡",
     ],
     "philosophy": [
         r"\bphilosophy\b",
@@ -364,6 +653,13 @@ _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
         r"\bplato\b",
         r"\baristotle\b",
         r"\butilitarianism\b",
+        r"哲学",
+        r"伦理",
+        r"形而上学",
+        r"认识论",
+        r"柏拉图",
+        r"亚里士多德",
+        r"功利主义",
     ],
     "chemistry": [
         r"\bchemistry\b",
@@ -375,6 +671,14 @@ _SUBJECT_SCOPE_PATTERNS: dict[str, list[str]] = {
         r"\bperiodic table\b",
         r"\bacid\b",
         r"\bbase\b",
+        r"化学",
+        r"原子",
+        r"分子",
+        r"反应",
+        r"化学计量",
+        r"元素周期表",
+        r"酸",
+        r"碱",
     ],
 }
 
@@ -505,7 +809,12 @@ def _compact_obfuscated_text(text: str) -> str:
 
 
 def _looks_homework_like(text: str) -> bool:
-    return _matches_any(text, _HOMEWORK_PATTERNS) or _matches_any(text, _META_PATTERNS)
+    return (
+        _matches_any(text, _HOMEWORK_PATTERNS)
+        or _matches_any(text, _META_PATTERNS)
+        or _matches_any(text, _ACADEMIC_INTENT_PATTERNS)
+        or _has_historical_framing(text)
+    )
 
 
 def _has_explicit_academic_cue(text: str) -> bool:
@@ -520,17 +829,88 @@ def _mentions_out_of_scope_subject(text: str) -> bool:
     return _matches_any(text, _OUT_OF_SCOPE_SUBJECT_PATTERNS)
 
 
+def _has_year_reference(text: str) -> bool:
+    return bool(
+        re.search(r"\b(?:1[0-9]{3}|20[0-2][0-9])\b", text)
+        or re.search(r"(?:1[0-9]{3}|20[0-2][0-9])年", text)
+        or re.search(r"[一二三四五六七八九十]+\s*世纪", text)
+    )
+
+
+def _has_historical_framing(text: str) -> bool:
+    return _matches_any(text, _HISTORICAL_FRAMING_PATTERNS) or _has_year_reference(text)
+
+
+def _has_broader_history_analysis(text: str) -> bool:
+    return _has_historical_framing(text) and (
+        _matches_any(text, _BROADER_HISTORY_ANALYSIS_PATTERNS)
+        or _matches_any(text, _ACADEMIC_INTENT_PATTERNS)
+    )
+
+
+def _looks_like_everyday_service_request(text: str) -> bool:
+    if _matches_any(text, _UNAMBIGUOUS_NON_HOMEWORK_PATTERNS):
+        return True
+    if not _matches_any(text, _LIFE_PATTERNS):
+        return False
+
+    has_service_intent = _matches_any(text, _LIFE_SERVICE_INTENT_PATTERNS)
+    has_personal_context = _matches_any(text, _PERSONAL_CONTEXT_PATTERNS)
+    discipline_grounded_signal = (
+        _mentions_allowed_subject(text)
+        or _has_broader_history_analysis(text)
+        or _has_explicit_academic_cue(text)
+    )
+
+    if discipline_grounded_signal and not has_service_intent and not has_personal_context:
+        return False
+
+    if (
+        discipline_grounded_signal
+        and _mentions_allowed_subject(text)
+        and not has_personal_context
+        and not _matches_any(
+            text,
+            [
+                r"\bflight\b",
+                r"\bhotel\b",
+                r"\brestaurant\b",
+                r"\bshopping\b",
+                r"\bdating\b",
+                r"机票",
+                r"酒店",
+                r"餐厅",
+                r"购物",
+                r"约会",
+            ],
+        )
+        and not has_service_intent
+    ):
+        return False
+
+    return has_service_intent or has_personal_context or not discipline_grounded_signal
+
+
 def _looks_like_local_institution_admin_query(text: str) -> bool:
-    return _matches_any(text, _ORG_ADMIN_PATTERNS) and _matches_any(text, _ORG_HINT_PATTERNS)
+    return _matches_any(text, _ORG_ADMIN_PATTERNS) and _matches_any(text, _LOCAL_INSTITUTION_HINT_PATTERNS)
 
 
 def _looks_like_org_trivia_query(text: str) -> bool:
     if _looks_like_local_institution_admin_query(text):
         return True
-    return (
-        _matches_any(text, [r"\bceo\b", r"\bcfo\b", r"\bcto\b", r"\bcoo\b"])
-        and _matches_any(text, [r"\bfirst\b", r"\bfound(?:er|ed|ing)\b", r"\bwho was\b", r"\blist\b"])
+
+    asks_for_executive_list = _matches_any(text, [r"\bceo\b", r"\bcfo\b", r"\bcto\b", r"\bcoo\b"]) and _matches_any(
+        text,
+        [r"\bfirst\b", r"\bfound(?:er|ed|ing)\b", r"\bwho was\b", r"\blist\b", r"谁", r"列出"],
     )
+    org_admin_factoid = _matches_any(text, _ORG_ADMIN_PATTERNS) and _matches_any(text, _ORG_HINT_PATTERNS)
+    if not (asks_for_executive_list or org_admin_factoid):
+        return False
+
+    if _has_broader_history_analysis(text):
+        return False
+
+    return True
 
 
 def detect_out_of_scope_subjects(
@@ -578,6 +958,9 @@ def is_academic_level_statement(text: str) -> bool:
         r"^\s*i(?:'m| am)\s+.*student\.?\s*$",
         r"^\s*i(?:'m| am)\s+.*student,?\s*provide\s+your\s+answers\s+accordingly\.?\s*$",
         r"^\s*year\s*\d+.*student\.?\s*$",
+        r"^\s*我是.*学生[。.]?\s*$",
+        r"^\s*我是.*学生[，,]?\s*请按.*(程度|水平).*(回答|解释)[。.]?\s*$",
+        r"^\s*(大一|大二|大三|大四|大学[一二三四]年级).*(学生)?[。.]?\s*$",
     ]
     return any(re.search(pattern, normalized_text, re.IGNORECASE) for pattern in statement_patterns)
 
@@ -640,20 +1023,7 @@ def prefilter_input(
             encoding=encoding,
         )
 
-    if _matches_any(normalized_text, _LIFE_PATTERNS) and not _has_explicit_academic_cue(normalized_text):
-        return InputGuardResult(
-            allowed=False,
-            normalized_input=normalized_text,
-            rejection_reason=STRICT_REFUSAL_MESSAGE,
-            reason_code="non_homework",
-            stage="prefilter",
-            encoding=encoding,
-        )
-
-    if _matches_any(normalized_text, _LIFE_PATTERNS) and _matches_any(
-        normalized_text,
-        _LIFE_SERVICE_INTENT_PATTERNS,
-    ):
+    if _looks_like_everyday_service_request(normalized_text):
         return InputGuardResult(
             allowed=False,
             normalized_input=normalized_text,
@@ -734,5 +1104,38 @@ def detect_academic_level(user_input: str) -> Optional[str]:
     )
     if match:
         return match.group(0).strip()
+
+    chinese_level_map = {
+        "大一": "first-year university student",
+        "大二": "second-year university student",
+        "大三": "third-year university student",
+        "大四": "fourth-year university student",
+        "大学一年级": "first-year university student",
+        "大学二年级": "second-year university student",
+        "大学三年级": "third-year university student",
+        "大学四年级": "fourth-year university student",
+        "本科生": "undergraduate student",
+        "大学生": "university student",
+        "高中生": "high-school student",
+        "初中生": "middle-school student",
+        "研究生": "graduate student",
+        "本科学生": "undergraduate student",
+    }
+
+    match = re.search(
+        r"(?:我是|我是一名|我现在是)\s*(大一|大二|大三|大四|大学一年级|大学二年级|大学三年级|大学四年级|本科生|大学生|高中生|初中生|研究生)(?:学生)?",
+        user_input,
+        re.IGNORECASE,
+    )
+    if match:
+        return chinese_level_map.get(match.group(1).strip(), match.group(1).strip())
+
+    match = re.search(
+        r"(大一|大二|大三|大四|大学一年级|大学二年级|大学三年级|大学四年级|本科|高中|初中|研究生)\s*学生",
+        user_input,
+        re.IGNORECASE,
+    )
+    if match:
+        return chinese_level_map.get(match.group(1).strip(), match.group(0).strip())
 
     return None

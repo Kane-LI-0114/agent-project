@@ -194,6 +194,23 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("tailor future answers", payload.reply)
 
+    async def test_strict_mode_accepts_chinese_academic_level_statement(self) -> None:
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=ConversationManager(),
+            strict_reviewer=ScriptedLLMClient(),
+            strict_generator=ScriptedLLMClient(),
+            strict_auditor=ScriptedLLMClient(),
+        )
+
+        payload = await handler.handle(
+            "我是大一学生，请按这个程度回答。",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("tailor future answers", payload.reply)
+
     async def test_strict_mode_uses_history_for_follow_up_practice_request(self) -> None:
         reviewer = ScriptedLLMClient(
             responses=[
@@ -257,6 +274,42 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("summary of our conversation", payload.reply.lower())
         self.assertIn("French Revolution", payload.reply)
         self.assertEqual(len(llm.chat_calls), 2)
+
+    async def test_strict_mode_answers_chinese_summary_request_locally(self) -> None:
+        reviewer = ScriptedLLMClient(
+            responses=[
+                '{"decision":"allow","reason_code":"allowed","summary":"history question","normalized_input":"Please explain the French Revolution."}'
+            ]
+        )
+        generator = ScriptedLLMClient(
+            responses=["The French Revolution began in 1789 and transformed France."]
+        )
+        auditor = ScriptedLLMClient(
+            responses=[
+                '{"decision":"approve","reason_code":"approved","summary":"safe and in scope","approved":true}'
+            ]
+        )
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=ConversationManager(),
+            strict_reviewer=reviewer,
+            strict_generator=generator,
+            strict_auditor=auditor,
+        )
+
+        await handler.handle(
+            "Please explain the French Revolution.",
+            search_mode="off",
+            mode="strict",
+        )
+        payload = await handler.handle(
+            "请总结一下我们刚才的对话。",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("summary of our conversation", payload.reply.lower())
+        self.assertEqual(len(reviewer.chat_calls), 1)
 
     async def test_multi_turn_summary_is_answered_locally_in_strict_mode(self) -> None:
         reviewer = ScriptedLLMClient(
