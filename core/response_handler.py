@@ -1093,8 +1093,8 @@ class ResponseHandler:
         if search_result is None or not messages:
             return messages
         search_message = {
-            "role": "system",
-            "content": search_result.to_system_message(),
+            "role": "assistant",
+            "content": search_result.to_reference_message(),
         }
         return messages[:-1] + [search_message, messages[-1]]
 

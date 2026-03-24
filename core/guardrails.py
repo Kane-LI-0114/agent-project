@@ -550,6 +550,7 @@ _ORG_ADMIN_PATTERNS: List[str] = [
 
 _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
     ("jailbreak", r"\bignore (all|previous|prior|above) instructions\b"),
+    ("jailbreak", r"\b(ignore|disregard|override)\b.*\b(system|developer|safety|policy)\b"),
     ("jailbreak", r"\bignore\b.*\bguardrails?\b"),
     ("jailbreak", r"\bdisregard (the )?(system|safety|guardrail)"),
     ("jailbreak", r"\bprompt injection\b"),
@@ -565,6 +566,10 @@ _JAILBREAK_PATTERNS: List[tuple[str, str]] = [
     ("jailbreak", r"\bhidden rules?\b"),
     ("jailbreak", r"\bprivate policy\b"),
     ("jailbreak", r"\bpolicy headings\b"),
+    ("jailbreak", r"\bdeveloper message\b"),
+    ("jailbreak", r"\bdeveloper prompt\b"),
+    ("jailbreak", r"\brepeat\b.*\btext above\b"),
+    ("jailbreak", r"\breveal\b.*\b(prompt|policy|rules?)\b"),
     ("jailbreak", r"\bconstraints?\b.*\b(startup|initialized|initialised)\b"),
     ("jailbreak", r"\binstructions?\b.*\bbefore my first message\b"),
     ("jailbreak", r"\bsummar(?:ize|ise)\b.*\binstructions?\b.*\bgiven\b"),
@@ -760,7 +765,7 @@ def _try_decode_morse(text: str) -> Optional[str]:
     return " ".join(words).strip() if words else None
 
 
-def _normalize_input(text: str) -> tuple[str, Optional[str]]:
+def _normalize_input_once(text: str) -> tuple[str, Optional[str]]:
     cleaned = _strip_invisible_chars(text).strip()
     for encoding_name, decoder in (
         ("base64", _try_decode_base64),
@@ -773,21 +778,58 @@ def _normalize_input(text: str) -> tuple[str, Optional[str]]:
     return cleaned, None
 
 
+def _normalize_input(text: str) -> tuple[str, Optional[str]]:
+    current = text
+    encodings: list[str] = []
+    for _ in range(3):
+        normalized, encoding = _normalize_input_once(current)
+        current = normalized
+        if not encoding:
+            break
+        encodings.append(encoding)
+    return current, "+".join(encodings) if encodings else None
+
+
+def _generate_rule_scan_variants(text: str) -> list[str]:
+    base = _strip_invisible_chars(unicodedata.normalize("NFKC", text)).strip()
+    variants = [
+        base,
+        re.sub(r"\s+", " ", base),
+        re.sub(r"(?<=\w)[\s._\-]+(?=\w)", "", base),
+        base.translate(_LEETSPEAK_TRANSLATION),
+    ]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        candidate = item.strip()
+        if candidate and candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
+
+
 def _find_rule_matches(text: str) -> list[str]:
     matches: list[str] = []
-    for label, pattern in _JAILBREAK_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            matches.append(label)
-    compact = _compact_obfuscated_text(text)
+    variants = _generate_rule_scan_variants(text)
+    for variant in variants:
+        for label, pattern in _JAILBREAK_PATTERNS:
+            if re.search(pattern, variant, re.IGNORECASE):
+                matches.append(label)
+    compact = _compact_obfuscated_text(" ".join(variants))
     compact_signatures = {
         "jailbreak": [
             "ignorepreviousinstructions",
+            "ignoreallpreviousinstructions",
             "systemprompt",
+            "developerprompt",
+            "developermessage",
             "hiddenrules",
             "internalinstructions",
             "systeminstructions",
             "privatepolicy",
             "debugmode",
+            "repeattextabove",
+            "revealhiddenrules",
         ],
         "harmful": [
             "howtomakebomb",
@@ -806,6 +848,37 @@ def _compact_obfuscated_text(text: str) -> str:
     """Collapse spaces/punctuation and normalize common leetspeak for rule matching."""
     cleaned = unicodedata.normalize("NFKC", text).translate(_LEETSPEAK_TRANSLATION)
     return re.sub(r"[^a-z0-9]+", "", cleaned.lower())
+
+
+def _count_role_markers(text: str) -> int:
+    patterns = [
+        r"\b(?:system|developer|assistant|user|human|model)\s*:",
+        r"</?(?:system|developer|assistant|user|human|model)>",
+        r"(?:系统|开发者|助手|用户)\s*[:：]",
+    ]
+    return sum(len(re.findall(pattern, text, re.IGNORECASE)) for pattern in patterns)
+
+
+def _looks_like_roleplay_jailbreak_scaffold(text: str) -> bool:
+    role_markers = _count_role_markers(text)
+    if role_markers < 4:
+        return False
+
+    privilege_terms = _matches_any(
+        text,
+        [
+            r"\b(system prompt|developer message|hidden rules|ignore previous instructions|act as)\b",
+            r"(系统提示词|开发者消息|隐藏规则|忽略之前的指令)",
+        ],
+    )
+    refusal_reset_terms = _matches_any(
+        text,
+        [
+            r"\b(?:sorry i cannot help|i can't help|sure, here(?:'| i)s|certainly|of course)\b",
+            r"(抱歉我不能|当然可以|下面是|好的，以下是)",
+        ],
+    )
+    return role_markers >= 8 or (role_markers >= 4 and (privilege_terms or refusal_reset_terms))
 
 
 def _looks_homework_like(text: str) -> bool:
@@ -991,6 +1064,17 @@ def prefilter_input(
             reason_code=f"{encoding + '_' if encoding else ''}{primary}",
             stage="prefilter",
             matched_rules=matched_rules,
+            encoding=encoding,
+        )
+
+    if _looks_like_roleplay_jailbreak_scaffold(normalized_text):
+        return InputGuardResult(
+            allowed=False,
+            normalized_input=normalized_text,
+            rejection_reason=STRICT_REFUSAL_MESSAGE,
+            reason_code="jailbreak",
+            stage="prefilter",
+            matched_rules=["roleplay_scaffold"],
             encoding=encoding,
         )
 
