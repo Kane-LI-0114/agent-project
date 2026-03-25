@@ -165,3 +165,11 @@ class PrefilterGuardrailTests(unittest.TestCase):
     def test_allows_chinese_history_question(self) -> None:
         result = prefilter_input("请解释一下法国大革命的原因。")
         self.assertTrue(result.allowed)
+
+    def test_does_not_treat_english_as_out_of_scope_subject_in_language_request(self) -> None:
+        result = prefilter_input("Please explain this in English.")
+        self.assertTrue(result.allowed)
+
+    def test_does_not_treat_yingyu_as_out_of_scope_subject_in_language_request(self) -> None:
+        result = prefilter_input("请用英语解释这个历史问题。")
+        self.assertTrue(result.allowed)
