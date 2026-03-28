@@ -5,7 +5,7 @@ A production-ready, multi-turn homework tutoring AI agent built for the HKUST CS
 ## Features
 
 - **Multi-Subject Support** – Math and History homework tutoring (mandatory), with optional coverage for Geography, Finance, Economics, Philosophy, Chemistry.
-- **Dual Guardrails** – Code-level pre-check (regex/heuristic) + LLM system-prompt enforcement to reject non-homework or off-subject inputs.
+- **LLM Intent Review Pipeline** – Lightweight local normalization plus an intent-review LLM before answer generation, followed by prompt-level guardrails in generation and audit stages.
 - **Multi-turn Conversation** – Full conversation memory with automatic token-based truncation to prevent context window overflow.
 - **Academic Level Adaptation** – Adjusts answer depth based on the user's stated academic background.
 - **Conversation Summary** – Generates summaries of the entire dialog history on request.
@@ -199,8 +199,8 @@ User Input
     │
     ▼
 ┌─────────────────┐
-│  Code Guardrail │──── reject obvious non-homework ───▶ Rejection Message
-│  (regex/heuristic)│
+│ Intent Reviewer │──── refuse out-of-scope intent ───▶ Rejection Message
+│      (LLM)      │
 └────────┬────────┘
          │ pass
          ▼

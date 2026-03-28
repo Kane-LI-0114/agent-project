@@ -79,6 +79,11 @@ class SearchReviewerTests(unittest.IsolatedAsyncioTestCase):
         llm = ScriptedLLMClient(
             responses=["The French Revolution had important political and social causes."]
         )
+        intent_reviewer = ScriptedLLMClient(
+            responses=[
+                '{"decision":"allow","reason_code":"allowed","summary":"history question","normalized_input":"French Revolution causes","intent_type":"question","academic_level":""}'
+            ]
+        )
         followup = ScriptedLLMClient(
             responses=[
                 '{"suggestions":["Explain one cause in more detail.","Give me a short timeline.","Ask me a practice question."]}'
@@ -101,6 +106,7 @@ class SearchReviewerTests(unittest.IsolatedAsyncioTestCase):
             llm_client=llm,
             conversation=ConversationManager(),
             search_service=service,
+            strict_reviewer=intent_reviewer,
             followup_suggester=followup,
         )
 

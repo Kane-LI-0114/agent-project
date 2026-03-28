@@ -5,8 +5,8 @@ Response generation and formatting utilities for the CSIT5900 Homework
 Tutoring Agent.
 
 Supports:
-- normal mode: existing pre-filter + optional search + single-model response
-- strict mode: local pre-filter + input reviewer + answer generator + output
+- normal mode: lightweight normalization + intent review + optional search + single-model response
+- strict mode: lightweight normalization + intent review + answer generator + output
   auditor, with structured trace cards for the UI
 """
 
@@ -38,8 +38,6 @@ from config.settings import (
 from core.conversation import ConversationManager
 from core.guardrails import (
     detect_academic_level,
-    is_academic_level_statement,
-    is_conversation_summary_request,
     log_refusal,
     prefilter_input,
 )
@@ -145,6 +143,26 @@ class ResponseHandler:
             follow_up_suggestions=follow_up_suggestions,
         )
 
+    async def _run_intent_review(
+        self,
+        normalized_input: str,
+        selected_subjects: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Classify the user's real intent before any answer generation."""
+        return await self._run_json_stage(
+            client=self._strict_reviewer or self._llm,
+            messages=self._build_intent_review_messages(normalized_input, selected_subjects),
+            timeout_seconds=STRICT_REVIEWER_TIMEOUT_SECONDS,
+            fallback={
+                "decision": "refuse",
+                "reason_code": "unclear",
+                "summary": "Intent review failed to return a valid decision.",
+                "normalized_input": normalized_input,
+                "intent_type": "refuse",
+                "academic_level": "",
+            },
+        )
+
     async def _handle_normal(
         self,
         user_input: str,
@@ -154,12 +172,13 @@ class ResponseHandler:
     ) -> ResponsePayload:
         subjects = self._normalize_subjects(selected_subjects)
         prefilter = prefilter_input(user_input, allowed_subjects=subjects)
+        normalized_input = prefilter.normalized_input or user_input.strip()
         if not prefilter.allowed:
             self._conv.add_user_message(user_input)
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
             log_refusal(
                 user_input,
-                prefilter.normalized_input,
+                normalized_input,
                 prefilter.stage,
                 prefilter.reason_code,
             )
@@ -168,41 +187,62 @@ class ResponseHandler:
                 reply=reply,
                 sources=[],
                 mode="normal",
-                user_input=prefilter.normalized_input or user_input,
+                user_input=normalized_input or user_input,
                 selected_subjects=subjects,
             )
 
-        level = detect_academic_level(prefilter.normalized_input)
+        intent_review = await self._run_intent_review(normalized_input, subjects)
+        normalized_input = str(intent_review.get("normalized_input", normalized_input)).strip() or normalized_input
+        if intent_review.get("decision") != "allow":
+            self._conv.add_user_message(user_input)
+            reply = STRICT_REFUSAL_MESSAGE
+            log_refusal(
+                user_input,
+                normalized_input,
+                "intent_reviewer",
+                str(intent_review.get("reason_code", "unclear")),
+            )
+            self._conv.add_assistant_message(reply)
+            return await self._build_payload(
+                reply=reply,
+                sources=[],
+                mode="normal",
+                user_input=normalized_input,
+                selected_subjects=subjects,
+            )
+
+        level = str(intent_review.get("academic_level", "")).strip() or detect_academic_level(normalized_input)
         if level:
             self._conv.academic_level = level
             logger.info("Academic level set to: %s", level)
 
-        if is_academic_level_statement(prefilter.normalized_input):
-            self._conv.add_user_message(prefilter.normalized_input)
+        intent_type = str(intent_review.get("intent_type", "question")).strip() or "question"
+        if intent_type == "academic_level_update":
+            self._conv.add_user_message(normalized_input)
             reply = self._build_academic_level_acknowledgement(level or "student")
             self._conv.add_assistant_message(reply)
             return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="normal",
-                user_input=prefilter.normalized_input,
+                user_input=normalized_input,
                 selected_subjects=subjects,
             )
 
-        if is_conversation_summary_request(prefilter.normalized_input):
+        if intent_type == "conversation_summary":
             reply = self._build_conversation_summary_reply()
-            self._conv.add_user_message(prefilter.normalized_input)
+            self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
             return await self._build_payload(
                 reply=reply,
                 sources=[],
                 mode="normal",
-                user_input=prefilter.normalized_input,
+                user_input=normalized_input,
                 selected_subjects=subjects,
             )
 
-        self._conv.add_user_message(prefilter.normalized_input)
-        search_result = await self._search.maybe_search(prefilter.normalized_input, search_mode)
+        self._conv.add_user_message(normalized_input)
+        search_result = await self._search.maybe_search(normalized_input, search_mode)
         messages = self._build_messages(
             search_result,
             selected_subjects=subjects,
@@ -220,7 +260,7 @@ class ResponseHandler:
             reply=reply,
             sources=search_result.to_dict_list() if search_result else [],
             mode="normal",
-            user_input=prefilter.normalized_input,
+            user_input=normalized_input,
             selected_subjects=subjects,
         )
 
@@ -235,9 +275,9 @@ class ResponseHandler:
         trace = [
             StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="pending",
-                summary="Checking whether the request is safe and homework-related.",
+                summary="Classifying the user's real intent and scope.",
                 decision="pending",
             ),
             StrictTraceStage(
@@ -262,14 +302,14 @@ class ResponseHandler:
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="refused",
                 summary=prefilter.reason_code.replace("_", " "),
                 decision="refuse",
             )
             trace[1].status = "skipped"
             trace[1].decision = "skipped"
-            trace[1].summary = "Skipped because the local pre-filter refused the request."
+            trace[1].summary = "Skipped because the local input check rejected the request."
             trace[2].status = "skipped"
             trace[2].decision = "skipped"
             trace[2].summary = "Skipped because no candidate answer was generated."
@@ -285,19 +325,57 @@ class ResponseHandler:
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
-        level = detect_academic_level(normalized_input)
+        reviewer_response = await self._run_intent_review(normalized_input, subjects)
+        trace[0] = StrictTraceStage(
+            key="input_review",
+            title="Intent Review",
+            status="complete" if reviewer_response.get("decision") == "allow" else "refused",
+            summary=str(reviewer_response.get("summary", "Intent review complete.")),
+            decision=str(reviewer_response.get("decision", "refuse")),
+            duration_ms=reviewer_response.get("_duration_ms", 0),
+        )
+
+        normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
+        if reviewer_response.get("decision") != "allow":
+            reply = STRICT_REFUSAL_MESSAGE
+            trace[1].status = "skipped"
+            trace[1].decision = "skipped"
+            trace[1].summary = "Skipped because the intent reviewer did not approve the request."
+            trace[2].status = "skipped"
+            trace[2].decision = "skipped"
+            trace[2].summary = "Skipped because no candidate answer was generated."
+            log_refusal(
+                user_input,
+                normalized_input,
+                "intent_reviewer",
+                str(reviewer_response.get("reason_code", "unclear")),
+            )
+            self._conv.add_user_message(normalized_input)
+            self._conv.add_assistant_message(reply)
+            return await self._build_payload(
+                reply=reply,
+                sources=[],
+                mode="strict",
+                user_input=normalized_input,
+                selected_subjects=subjects,
+                strict_trace=[asdict(stage) for stage in trace],
+            )
+
+        level = str(reviewer_response.get("academic_level", "")).strip() or detect_academic_level(normalized_input)
         if level:
             self._conv.academic_level = level
             logger.info("Academic level set to: %s", level)
 
-        if is_academic_level_statement(normalized_input):
+        intent_type = str(reviewer_response.get("intent_type", "question")).strip() or "question"
+        if intent_type == "academic_level_update":
             reply = self._build_academic_level_acknowledgement(level or "student")
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="complete",
                 summary="Academic level update detected and accepted.",
                 decision="allow",
+                duration_ms=reviewer_response.get("_duration_ms", 0),
             )
             trace[1] = StrictTraceStage(
                 key="answer_generation",
@@ -324,14 +402,15 @@ class ResponseHandler:
                 strict_trace=[asdict(stage) for stage in trace],
             )
 
-        if is_conversation_summary_request(normalized_input):
+        if intent_type == "conversation_summary":
             reply = self._build_conversation_summary_reply()
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="complete",
                 summary="Conversation-summary request detected and accepted.",
                 decision="allow",
+                duration_ms=reviewer_response.get("_duration_ms", 0),
             )
             trace[1] = StrictTraceStage(
                 key="answer_generation",
@@ -346,52 +425,6 @@ class ResponseHandler:
                 status="complete",
                 summary="Local conversation summary is safe and in scope.",
                 decision="approve",
-            )
-            self._conv.add_user_message(normalized_input)
-            self._conv.add_assistant_message(reply)
-            return await self._build_payload(
-                reply=reply,
-                sources=[],
-                mode="strict",
-                user_input=normalized_input,
-                selected_subjects=subjects,
-                strict_trace=[asdict(stage) for stage in trace],
-            )
-
-        reviewer_response = await self._run_json_stage(
-            client=self._strict_reviewer or self._llm,
-            messages=self._build_strict_reviewer_messages(normalized_input, subjects),
-            timeout_seconds=STRICT_REVIEWER_TIMEOUT_SECONDS,
-            fallback={
-                "decision": "refuse",
-                "reason_code": "unclear",
-                "summary": "Input review failed to return a valid decision.",
-                "normalized_input": normalized_input,
-            },
-        )
-        trace[0] = StrictTraceStage(
-            key="input_review",
-            title="Input Review",
-            status="complete" if reviewer_response.get("decision") == "allow" else "refused",
-            summary=str(reviewer_response.get("summary", "Input review complete.")),
-            decision=str(reviewer_response.get("decision", "refuse")),
-            duration_ms=reviewer_response.get("_duration_ms", 0),
-        )
-
-        normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
-        if reviewer_response.get("decision") != "allow":
-            reply = STRICT_REFUSAL_MESSAGE
-            trace[1].status = "skipped"
-            trace[1].decision = "skipped"
-            trace[1].summary = "Skipped because the reviewer did not approve the request."
-            trace[2].status = "skipped"
-            trace[2].decision = "skipped"
-            trace[2].summary = "Skipped because no candidate answer was generated."
-            log_refusal(
-                user_input,
-                normalized_input,
-                "input_reviewer",
-                str(reviewer_response.get("reason_code", "unclear")),
             )
             self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
@@ -562,16 +595,16 @@ class ResponseHandler:
         trace = [
             StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="active",
-                summary="Checking whether the request is safe and homework-related.",
+                summary="Classifying the user's real intent and scope.",
                 decision="running",
             ),
             StrictTraceStage(
                 key="answer_generation",
                 title="Answer Generation",
                 status="pending",
-                summary="Waiting for the reviewer to approve the request.",
+                summary="Waiting for the intent reviewer to approve the request.",
                 decision="pending",
             ),
             StrictTraceStage(
@@ -590,14 +623,14 @@ class ResponseHandler:
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="refused",
                 summary=prefilter.reason_code.replace("_", " "),
                 decision="refuse",
             )
             trace[1].status = "skipped"
             trace[1].decision = "skipped"
-            trace[1].summary = "Skipped because the local pre-filter refused the request."
+            trace[1].summary = "Skipped because the local input check rejected the request."
             trace[2].status = "skipped"
             trace[2].decision = "skipped"
             trace[2].summary = "Skipped because no candidate answer was generated."
@@ -620,19 +653,67 @@ class ResponseHandler:
             yield {"type": "done"}
             return
 
-        level = detect_academic_level(normalized_input)
+        reviewer_response = await self._run_intent_review(normalized_input, subjects)
+        review_allowed = reviewer_response.get("decision") == "allow"
+        review_summary = str(reviewer_response.get("summary", "Intent review complete."))
+        trace[0] = StrictTraceStage(
+            key="input_review",
+            title="Intent Review",
+            status="complete" if review_allowed else "refused",
+            summary="",
+            decision=str(reviewer_response.get("decision", "refuse")),
+            duration_ms=reviewer_response.get("_duration_ms", 0),
+        )
+        yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+        async for event in self._stream_stage_summary(trace, 0, review_summary):
+            yield event
+
+        normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
+        if not review_allowed:
+            reply = STRICT_REFUSAL_MESSAGE
+            trace[1].status = "skipped"
+            trace[1].decision = "skipped"
+            trace[1].summary = "Skipped because the intent reviewer did not approve the request."
+            trace[2].status = "skipped"
+            trace[2].decision = "skipped"
+            trace[2].summary = "Skipped because no candidate answer was generated."
+            log_refusal(
+                user_input,
+                normalized_input,
+                "intent_reviewer",
+                str(reviewer_response.get("reason_code", "unclear")),
+            )
+            self._conv.add_user_message(normalized_input)
+            self._conv.add_assistant_message(reply)
+            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
+            yield {"type": "strict_final", "reply": reply, "sources": []}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="strict",
+                ),
+            }
+            yield {"type": "done"}
+            return
+
+        level = str(reviewer_response.get("academic_level", "")).strip() or detect_academic_level(normalized_input)
         if level:
             self._conv.academic_level = level
             logger.info("Academic level set to: %s", level)
 
-        if is_academic_level_statement(normalized_input):
+        intent_type = str(reviewer_response.get("intent_type", "question")).strip() or "question"
+        if intent_type == "academic_level_update":
             reply = self._build_academic_level_acknowledgement(level or "student")
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="complete",
                 summary="Academic level update detected and accepted.",
                 decision="allow",
+                duration_ms=reviewer_response.get("_duration_ms", 0),
             )
             trace[1] = StrictTraceStage(
                 key="answer_generation",
@@ -664,14 +745,15 @@ class ResponseHandler:
             yield {"type": "done"}
             return
 
-        if is_conversation_summary_request(normalized_input):
+        if intent_type == "conversation_summary":
             reply = self._build_conversation_summary_reply()
             trace[0] = StrictTraceStage(
                 key="input_review",
-                title="Input Review",
+                title="Intent Review",
                 status="complete",
                 summary="Conversation-summary request detected and accepted.",
                 decision="allow",
+                duration_ms=reviewer_response.get("_duration_ms", 0),
             )
             trace[1] = StrictTraceStage(
                 key="answer_generation",
@@ -686,62 +768,6 @@ class ResponseHandler:
                 status="complete",
                 summary="Local conversation summary is safe and in scope.",
                 decision="approve",
-            )
-            self._conv.add_user_message(normalized_input)
-            self._conv.add_assistant_message(reply)
-            yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-            yield {"type": "strict_final", "reply": reply, "sources": []}
-            yield {
-                "type": "follow_up_suggestions",
-                "suggestions": await self._generate_follow_up_suggestions(
-                    user_input=normalized_input,
-                    assistant_reply=reply,
-                    selected_subjects=subjects,
-                    mode="strict",
-                ),
-            }
-            yield {"type": "done"}
-            return
-
-        reviewer_response = await self._run_json_stage(
-            client=self._strict_reviewer or self._llm,
-            messages=self._build_strict_reviewer_messages(normalized_input, subjects),
-            timeout_seconds=STRICT_REVIEWER_TIMEOUT_SECONDS,
-            fallback={
-                "decision": "refuse",
-                "reason_code": "unclear",
-                "summary": "Input review failed to return a valid decision.",
-                "normalized_input": normalized_input,
-            },
-        )
-        review_allowed = reviewer_response.get("decision") == "allow"
-        review_summary = str(reviewer_response.get("summary", "Input review complete."))
-        trace[0] = StrictTraceStage(
-            key="input_review",
-            title="Input Review",
-            status="complete" if review_allowed else "refused",
-            summary="",
-            decision=str(reviewer_response.get("decision", "refuse")),
-            duration_ms=reviewer_response.get("_duration_ms", 0),
-        )
-        yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
-        async for event in self._stream_stage_summary(trace, 0, review_summary):
-            yield event
-
-        normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
-        if not review_allowed:
-            reply = STRICT_REFUSAL_MESSAGE
-            trace[1].status = "skipped"
-            trace[1].decision = "skipped"
-            trace[1].summary = "Skipped because the reviewer did not approve the request."
-            trace[2].status = "skipped"
-            trace[2].decision = "skipped"
-            trace[2].summary = "Skipped because no candidate answer was generated."
-            log_refusal(
-                user_input,
-                normalized_input,
-                "input_reviewer",
-                str(reviewer_response.get("reason_code", "unclear")),
             )
             self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
@@ -953,12 +979,13 @@ class ResponseHandler:
         """Stream normal-mode replies chunk by chunk."""
         subjects = self._normalize_subjects(selected_subjects)
         prefilter = prefilter_input(user_input, allowed_subjects=subjects)
+        normalized_input = prefilter.normalized_input or user_input.strip()
         if not prefilter.allowed:
             self._conv.add_user_message(user_input)
             reply = prefilter.rejection_reason or STRICT_REFUSAL_MESSAGE
             log_refusal(
                 user_input,
-                prefilter.normalized_input,
+                normalized_input,
                 prefilter.stage,
                 prefilter.reason_code,
             )
@@ -968,7 +995,7 @@ class ResponseHandler:
             yield {
                 "type": "follow_up_suggestions",
                 "suggestions": await self._generate_follow_up_suggestions(
-                    user_input=prefilter.normalized_input or user_input,
+                    user_input=normalized_input or user_input,
                     assistant_reply=reply,
                     selected_subjects=subjects,
                     mode="normal",
@@ -977,13 +1004,40 @@ class ResponseHandler:
             yield {"type": "done"}
             return
 
-        level = detect_academic_level(prefilter.normalized_input)
+        intent_review = await self._run_intent_review(normalized_input, subjects)
+        normalized_input = str(intent_review.get("normalized_input", normalized_input)).strip() or normalized_input
+        if intent_review.get("decision") != "allow":
+            self._conv.add_user_message(user_input)
+            reply = STRICT_REFUSAL_MESSAGE
+            log_refusal(
+                user_input,
+                normalized_input,
+                "intent_reviewer",
+                str(intent_review.get("reason_code", "unclear")),
+            )
+            self._conv.add_assistant_message(reply)
+            yield {"type": "token", "token": reply}
+            yield {"type": "reply_complete"}
+            yield {
+                "type": "follow_up_suggestions",
+                "suggestions": await self._generate_follow_up_suggestions(
+                    user_input=normalized_input,
+                    assistant_reply=reply,
+                    selected_subjects=subjects,
+                    mode="normal",
+                ),
+            }
+            yield {"type": "done"}
+            return
+
+        level = str(intent_review.get("academic_level", "")).strip() or detect_academic_level(normalized_input)
         if level:
             self._conv.academic_level = level
             logger.info("Academic level set to: %s", level)
 
-        if is_academic_level_statement(prefilter.normalized_input):
-            self._conv.add_user_message(prefilter.normalized_input)
+        intent_type = str(intent_review.get("intent_type", "question")).strip() or "question"
+        if intent_type == "academic_level_update":
+            self._conv.add_user_message(normalized_input)
             reply = self._build_academic_level_acknowledgement(level or "student")
             self._conv.add_assistant_message(reply)
             yield {"type": "token", "token": reply}
@@ -991,7 +1045,7 @@ class ResponseHandler:
             yield {
                 "type": "follow_up_suggestions",
                 "suggestions": await self._generate_follow_up_suggestions(
-                    user_input=prefilter.normalized_input,
+                    user_input=normalized_input,
                     assistant_reply=reply,
                     selected_subjects=subjects,
                     mode="normal",
@@ -1000,16 +1054,16 @@ class ResponseHandler:
             yield {"type": "done"}
             return
 
-        if is_conversation_summary_request(prefilter.normalized_input):
+        if intent_type == "conversation_summary":
             reply = self._build_conversation_summary_reply()
-            self._conv.add_user_message(prefilter.normalized_input)
+            self._conv.add_user_message(normalized_input)
             self._conv.add_assistant_message(reply)
             yield {"type": "token", "token": reply}
             yield {"type": "reply_complete"}
             yield {
                 "type": "follow_up_suggestions",
                 "suggestions": await self._generate_follow_up_suggestions(
-                    user_input=prefilter.normalized_input,
+                    user_input=normalized_input,
                     assistant_reply=reply,
                     selected_subjects=subjects,
                     mode="normal",
@@ -1018,20 +1072,20 @@ class ResponseHandler:
             yield {"type": "done"}
             return
 
-        self._conv.add_user_message(prefilter.normalized_input)
-        should_search = self._search.should_execute(prefilter.normalized_input, search_mode)
+        self._conv.add_user_message(normalized_input)
+        should_search = self._search.should_execute(normalized_input, search_mode)
         optimized_queries: list[str] = []
         if should_search:
-            optimized_queries = await self._search.expand_queries(prefilter.normalized_input)
+            optimized_queries = await self._search.expand_queries(normalized_input)
             yield {
                 "type": "search_start",
-                "sources": self._search.get_pending_sources(prefilter.normalized_input),
+                "sources": self._search.get_pending_sources(normalized_input),
                 "queries": optimized_queries,
             }
         search_result = (
-            await self._search.search_many(prefilter.normalized_input, optimized_queries)
+            await self._search.search_many(normalized_input, optimized_queries)
             if should_search
-            else await self._search.maybe_search(prefilter.normalized_input, search_mode)
+            else await self._search.maybe_search(normalized_input, search_mode)
         )
         if should_search:
             yield {
@@ -1060,7 +1114,7 @@ class ResponseHandler:
         yield {
             "type": "follow_up_suggestions",
             "suggestions": await self._generate_follow_up_suggestions(
-                user_input=prefilter.normalized_input,
+                user_input=normalized_input,
                 assistant_reply=full_reply,
                 selected_subjects=subjects,
                 mode="normal",
@@ -1131,12 +1185,12 @@ class ResponseHandler:
         )
         return messages + [{"role": "system", "content": feedback_message}]
 
-    def _build_strict_reviewer_messages(
+    def _build_intent_review_messages(
         self,
         normalized_input: str,
         selected_subjects: list[str] | None = None,
     ) -> list[dict[str, str]]:
-        """Build reviewer messages with limited visible conversation context."""
+        """Build intent-review messages with limited visible conversation context."""
         messages: list[dict[str, str]] = [
             {"role": "system", "content": build_strict_input_review_prompt(self._normalize_subjects(selected_subjects))}
         ]
@@ -1157,7 +1211,7 @@ class ResponseHandler:
         return messages
 
     def _get_recent_history_for_review(self, max_messages: int = 8, max_chars: int = 3000) -> str:
-        """Serialize recent visible history for the strict reviewer."""
+        """Serialize recent visible history for the intent reviewer."""
         history = self._conv.get_messages()[1:]
         if not history:
             return ""
