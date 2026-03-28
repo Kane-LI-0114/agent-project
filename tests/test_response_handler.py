@@ -43,6 +43,7 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
         payload = await handler.handle("Explain photosynthesis for my biology homework.", search_mode="off")
 
         self.assertIn("Sorry", payload.reply)
+        self.assertIn("biology is out of scope", payload.reply)
         self.assertEqual(len(reviewer.chat_calls), 1)
         self.assertEqual(llm.chat_calls, [])
 
@@ -65,6 +66,7 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("Sorry", payload.reply)
+        self.assertIn("could not verify", payload.reply.lower())
         self.assertEqual(len(reviewer.chat_calls), 1)
         self.assertEqual(generator.chat_calls, [])
         self.assertEqual(auditor.chat_calls, [])
@@ -100,6 +102,7 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("Sorry", payload.reply)
+        self.assertIn("biology is not allowed", payload.reply)
         self.assertEqual(len(reviewer.chat_calls), 1)
         self.assertEqual(len(generator.chat_calls), 0)
         self.assertEqual(len(auditor.chat_calls), 0)
@@ -154,6 +157,7 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("French Revolution", first.reply)
         self.assertIn("Sorry", second.reply)
+        self.assertIn("prompt exfiltration request", second.reply)
         self.assertEqual(len(reviewer.chat_calls), 2)
         self.assertEqual(len(llm.chat_calls), 1)
 
@@ -194,7 +198,45 @@ class ResponseHandlerReliabilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("French Revolution", first.reply)
         self.assertIn("Sorry", second.reply)
+        self.assertIn("policy override attempt", second.reply)
         self.assertEqual(len(reviewer.chat_calls), 2)
+
+    async def test_strict_mode_auditor_refusal_explains_reason(self) -> None:
+        reviewer = ScriptedLLMClient(
+            responses=[
+                '{"decision":"allow","reason_code":"allowed","summary":"history question","normalized_input":"Please explain the French Revolution.","intent_type":"question","academic_level":""}'
+            ]
+        )
+        generator = ScriptedLLMClient(
+            responses=[
+                "Here is an unsafe answer that should be blocked.",
+                "Here is an unsafe answer that should be blocked again.",
+                "Here is an unsafe answer that should still be blocked.",
+            ]
+        )
+        auditor = ScriptedLLMClient(
+            responses=[
+                '{"decision":"refuse","reason_code":"policy_violation","summary":"the generated answer did not stay within the homework and safety rules","approved":false}',
+                '{"decision":"refuse","reason_code":"policy_violation","summary":"the generated answer did not stay within the homework and safety rules","approved":false}',
+                '{"decision":"refuse","reason_code":"policy_violation","summary":"the generated answer did not stay within the homework and safety rules","approved":false}'
+            ]
+        )
+        handler = ResponseHandler(
+            llm_client=ScriptedLLMClient(),
+            conversation=ConversationManager(),
+            strict_reviewer=reviewer,
+            strict_generator=generator,
+            strict_auditor=auditor,
+        )
+
+        payload = await handler.handle(
+            "Please explain the French Revolution.",
+            search_mode="off",
+            mode="strict",
+        )
+
+        self.assertIn("Sorry", payload.reply)
+        self.assertIn("did not stay within the homework and safety rules", payload.reply)
 
     async def test_strict_mode_accepts_academic_level_statement(self) -> None:
         reviewer = ScriptedLLMClient(

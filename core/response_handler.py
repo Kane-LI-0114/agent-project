@@ -163,6 +163,53 @@ class ResponseHandler:
             },
         )
 
+    def _build_refusal_reply(
+        self,
+        *,
+        reason_code: str | None = None,
+        summary: str | None = None,
+        fallback_message: str | None = None,
+    ) -> str:
+        """Build a short user-facing refusal that explains the reason."""
+        fallback = fallback_message or STRICT_REFUSAL_MESSAGE
+        cleaned_summary = " ".join(str(summary or "").split()).strip().rstrip(".")
+        normalized_reason = str(reason_code or "unclear").strip().lower() or "unclear"
+        default_reason_by_code = {
+            "empty_input": "I did not receive a question to answer",
+            "non_homework": "it is not a homework-related request within the allowed subjects",
+            "out_of_scope": "it is outside the allowed homework subjects for this tutor",
+            "out_of_scope_subject": "it is outside the allowed homework subjects for this tutor",
+            "out_of_scope_local_admin": "it focuses on local institutional trivia rather than an allowed homework topic",
+            "jailbreak": "it asks me to ignore rules or reveal internal instructions",
+            "cheating": "it asks for help I should not provide directly on your behalf",
+            "harmful": "it involves harmful or unsafe content",
+            "encoded_unsafe": "it contains encoded content that is still unsafe after decoding",
+            "policy_violation": "I could not produce a response that stayed within the homework and safety rules",
+            "empty_answer": "I could not produce a complete safe answer for that request",
+            "unclear": "I could not verify that it was a safe, in-scope homework request",
+        }
+        internal_summary_markers = (
+            "failed to return a valid decision",
+            "maximum attempts reached",
+            "generator returned an empty answer",
+            "audit failed on attempt",
+            "final audit failed",
+        )
+        if cleaned_summary and not any(marker in cleaned_summary.lower() for marker in internal_summary_markers):
+            return f"Sorry, I can't help with that. Reason: {cleaned_summary}."
+
+        default_reason = default_reason_by_code.get(normalized_reason)
+        if default_reason:
+            return f"Sorry, I can't help with that because {default_reason}."
+        return fallback
+
+    def _is_refusal_reply(self, assistant_reply: str) -> bool:
+        """Return True when the assistant reply is one of the refusal variants."""
+        normalized = assistant_reply.strip().lower()
+        return normalized == STRICT_REFUSAL_MESSAGE.strip().lower() or normalized.startswith(
+            "sorry, i can't help with that"
+        )
+
     async def _handle_normal(
         self,
         user_input: str,
@@ -195,7 +242,10 @@ class ResponseHandler:
         normalized_input = str(intent_review.get("normalized_input", normalized_input)).strip() or normalized_input
         if intent_review.get("decision") != "allow":
             self._conv.add_user_message(user_input)
-            reply = STRICT_REFUSAL_MESSAGE
+            reply = self._build_refusal_reply(
+                reason_code=str(intent_review.get("reason_code", "unclear")),
+                summary=str(intent_review.get("summary", "")),
+            )
             log_refusal(
                 user_input,
                 normalized_input,
@@ -337,7 +387,10 @@ class ResponseHandler:
 
         normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
         if reviewer_response.get("decision") != "allow":
-            reply = STRICT_REFUSAL_MESSAGE
+            reply = self._build_refusal_reply(
+                reason_code=str(reviewer_response.get("reason_code", "unclear")),
+                summary=str(reviewer_response.get("summary", "")),
+            )
             trace[1].status = "skipped"
             trace[1].decision = "skipped"
             trace[1].summary = "Skipped because the intent reviewer did not approve the request."
@@ -442,7 +495,10 @@ class ResponseHandler:
         search_sources = search_result.to_dict_list() if search_result else []
         total_generation_ms = 0
         total_audit_ms = 0
-        final_reply = STRICT_REFUSAL_MESSAGE
+        final_reply = self._build_refusal_reply(
+            reason_code="unclear",
+            summary="I could not produce a safe answer for that request.",
+        )
         last_auditor_response: dict[str, Any] | None = None
         last_feedback: dict[str, str] | None = None
         approved = False
@@ -566,6 +622,10 @@ class ResponseHandler:
             )
 
         if not approved:
+            final_reply = self._build_refusal_reply(
+                reason_code=str((last_auditor_response or {}).get("reason_code", "unclear")),
+                summary=str((last_auditor_response or {}).get("summary", "")),
+            )
             log_refusal(
                 user_input,
                 normalized_input,
@@ -670,7 +730,10 @@ class ResponseHandler:
 
         normalized_input = str(reviewer_response.get("normalized_input", normalized_input)).strip() or normalized_input
         if not review_allowed:
-            reply = STRICT_REFUSAL_MESSAGE
+            reply = self._build_refusal_reply(
+                reason_code=str(reviewer_response.get("reason_code", "unclear")),
+                summary=str(reviewer_response.get("summary", "")),
+            )
             trace[1].status = "skipped"
             trace[1].decision = "skipped"
             trace[1].summary = "Skipped because the intent reviewer did not approve the request."
@@ -814,7 +877,10 @@ class ResponseHandler:
         total_generation_ms = 0
         total_audit_ms = 0
         approved = False
-        final_reply = STRICT_REFUSAL_MESSAGE
+        final_reply = self._build_refusal_reply(
+            reason_code="unclear",
+            summary="I could not produce a safe answer for that request.",
+        )
         last_auditor_response: dict[str, Any] | None = None
         last_feedback: dict[str, str] | None = None
 
@@ -944,6 +1010,10 @@ class ResponseHandler:
             yield {"type": "strict_trace", "trace": [asdict(stage) for stage in trace]}
 
         if not approved:
+            final_reply = self._build_refusal_reply(
+                reason_code=str((last_auditor_response or {}).get("reason_code", "unclear")),
+                summary=str((last_auditor_response or {}).get("summary", "")),
+            )
             log_refusal(
                 user_input,
                 normalized_input,
@@ -1008,7 +1078,10 @@ class ResponseHandler:
         normalized_input = str(intent_review.get("normalized_input", normalized_input)).strip() or normalized_input
         if intent_review.get("decision") != "allow":
             self._conv.add_user_message(user_input)
-            reply = STRICT_REFUSAL_MESSAGE
+            reply = self._build_refusal_reply(
+                reason_code=str(intent_review.get("reason_code", "unclear")),
+                summary=str(intent_review.get("summary", "")),
+            )
             log_refusal(
                 user_input,
                 normalized_input,
@@ -1299,7 +1372,7 @@ class ResponseHandler:
             "assistant_reply": assistant_reply.strip(),
             "mode": mode,
             "allowed_subjects": subjects,
-            "reply_was_refusal": assistant_reply.strip() == STRICT_REFUSAL_MESSAGE,
+            "reply_was_refusal": self._is_refusal_reply(assistant_reply),
             "exclude_suggestions": list(exclude_suggestions or []),
         }
         response = await self._run_json_stage(
@@ -1380,7 +1453,7 @@ class ResponseHandler:
         subjects = self._normalize_subjects(selected_subjects)
         primary = format_subject_display_name(subjects[0]).lower() if subjects else "math"
         secondary = format_subject_display_name(subjects[1]).lower() if len(subjects) > 1 else primary
-        if assistant_reply.strip() == STRICT_REFUSAL_MESSAGE:
+        if self._is_refusal_reply(assistant_reply):
             return [
                 f"Can you help with a {primary} homework question instead?",
                 f"Give me a short {secondary} practice problem.",
