@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartTutor · Guardrails Slides</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --paper: #fbf8f2;
+      --panel: #ffffff;
+      --line: rgba(32, 28, 24, 0.12);
+      --line-strong: rgba(32, 28, 24, 0.22);
+      --text: #181512;
+      --muted: #5b534a;
+      --soft: #8a7d6f;
+      --accent: #b76e2b;
+      --accent-soft: rgba(183, 110, 43, 0.12);
+      --ok: #1b7f5c;
+      --ok-soft: rgba(27, 127, 92, 0.10);
+      --warn: #b05b50;
+      --warn-soft: rgba(176, 91, 80, 0.10);
+      --dark: #0f1013;
+      --dark-2: #17181d;
+      --dark-line: rgba(255,255,255,0.08);
+      --dark-text: #f1f3f6;
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+      --shadow: 0 12px 36px rgba(0, 0, 0, 0.06);
+      --ease: cubic-bezier(.22,1,.36,1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(24,21,18,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(24,21,18,0.03) 1px, transparent 1px);
+      background-size: 88px 88px;
+      opacity: 0.45;
+      pointer-events: none;
+    }
+
+    .deck-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .deck-hud {
+      position: fixed;
+      top: 14px;
+      left: 18px;
+      right: 18px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .hud-box {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(251, 248, 242, 0.9);
+      backdrop-filter: blur(12px);
+    }
+
+    .mark {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .hud-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      line-height: 1.05;
+    }
+
+    .hud-copy strong,
+    .eyebrow,
+    .label,
+    .mini,
+    .nav-label,
+    .badge {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 10px;
+    }
+
+    .hud-copy strong { color: var(--text); }
+    .hud-copy span,
+    .muted,
+    .copy,
+    .hint,
+    .footer-copy,
+    .card-copy,
+    .mock-copy,
+    .trace-copy,
+    .bullet-copy { color: var(--muted); }
+
+    .hud-progress {
+      width: 110px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(24,21,18,0.08);
+      overflow: hidden;
+    }
+
+    .hud-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.7s var(--ease);
+    }
+
+    .deck-nav {
+      position: fixed;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 20;
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid var(--line-strong);
+      background: rgba(24,21,18,0.06);
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    .nav-dot:hover,
+    .nav-dot:focus-visible { transform: scale(1.08); outline: none; }
+
+    .nav-dot.is-active {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .nav-label {
+      position: absolute;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%);
+      white-space: nowrap;
+      padding: 6px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(251,248,242,0.94);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+      color: var(--text);
+    }
+
+    .nav-dot:hover .nav-label,
+    .nav-dot.is-active .nav-label { opacity: 1; }
+
+    .deck-track {
+      width: 100%;
+      height: 100%;
+      transition: transform 0.82s var(--ease);
+      will-change: transform;
+    }
+
+    .slide {
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
+      padding: 66px 34px 22px;
+      overflow: hidden;
+    }
+
+    .slide-inner {
+      width: min(1260px, calc(100vw - 68px));
+      height: 100%;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 14px;
+    }
+
+    .slide-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .title-wrap {
+      max-width: 920px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .eyebrow { color: var(--accent); }
+
+    h1, h2 {
+      margin: 0;
+      font-family: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
+      font-weight: 600;
+      letter-spacing: -0.035em;
+      line-height: 0.98;
+      color: var(--text);
+    }
+
+    h1 { font-size: clamp(34px, 4vw, 58px); max-width: 860px; }
+    h2 { font-size: clamp(28px, 3vw, 44px); max-width: 860px; }
+
+    .subtitle {
+      margin: 0;
+      max-width: 900px;
+      color: var(--muted);
+      font-size: clamp(14px, 1.1vw, 18px);
+      line-height: 1.5;
+    }
+
+    .time {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--paper);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    [data-reveal] {
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.42s ease, transform 0.5s var(--ease);
+      transition-delay: var(--delay, 0s);
+    }
+
+    .slide.is-active [data-reveal] {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .grid-2,
+    .grid-hero,
+    .grid-3,
+    .grid-ui {
+      display: grid;
+      gap: 14px;
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    .grid-hero { grid-template-columns: 1.1fr 0.9fr; }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-ui { grid-template-columns: 1.05fr 0.95fr; }
+
+    .panel,
+    .card,
+    .mock,
+    .trace,
+    .takeaway {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      min-height: 0;
+    }
+
+    .panel { padding: 18px; display: grid; gap: 12px; }
+    .card { padding: 14px; display: grid; gap: 8px; }
+    .label { color: var(--soft); }
+
+    .statement {
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--paper);
+      font-family: "Iowan Old Style", "Baskerville", serif;
+      font-size: clamp(20px, 1.8vw, 30px);
+      line-height: 1.34;
+      color: var(--text);
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0,1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--paper);
+      display: grid;
+      gap: 5px;
+    }
+
+    .metric-value {
+      font-family: "Iowan Old Style", serif;
+      font-size: clamp(24px, 2.2vw, 34px);
+      line-height: 1;
+    }
+
+    .metric-copy { font-size: 13px; line-height: 1.4; color: var(--muted); }
+
+    .bullet-list,
+    .short-list {
+      display: grid;
+      gap: 8px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .bullet-list li,
+    .short-list li {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .bullet-list strong,
+    .short-list strong,
+    .card-title,
+    .trace-title,
+    .mock-title,
+    .takeaway-title { color: var(--text); }
+
+    .card-title,
+    .trace-title,
+    .mock-title,
+    .takeaway-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .card-copy,
+    .trace-copy,
+    .mock-copy,
+    .takeaway-copy { font-size: 13px; line-height: 1.45; }
+
+    .step-list { display: grid; gap: 8px; }
+
+    .step {
+      display: grid;
+      grid-template-columns: 26px 1fr;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      min-height: 0;
+    }
+
+    .step-num {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .example-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .example {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      display: grid;
+      gap: 6px;
+      min-height: 0;
+    }
+
+    .badge {
+      width: fit-content;
+      padding: 4px 7px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+
+    .badge.ok { color: var(--ok); background: var(--ok-soft); border-color: rgba(27,127,92,0.16); }
+    .badge.no { color: var(--warn); background: var(--warn-soft); border-color: rgba(176,91,80,0.16); }
+
+    .trace {
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      background: var(--paper);
+    }
+
+    .trace-card {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+    }
+
+    .trace-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .trace-state {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 4px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+    }
+
+    .trace-state.ok { color: var(--ok); background: var(--ok-soft); }
+    .trace-state.mid { color: var(--accent); background: var(--accent-soft); }
+
+    .mock {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      background: linear-gradient(180deg, var(--dark-2), var(--dark));
+      color: var(--dark-text);
+      border-color: var(--dark-line);
+      box-shadow: none;
+    }
+
+    .mock-shell {
+      border: 1px solid var(--dark-line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, #101216, #0d0f12);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .mock-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .mock-brand {
+      display: grid;
+      gap: 2px;
+      line-height: 1.05;
+    }
+
+    .mock-brand strong { font-size: 16px; color: var(--dark-text); }
+    .mock-brand span,
+    .mock-copy,
+    .mock-note { color: rgba(241,243,246,0.56); }
+
+    .ghost {
+      padding: 7px 10px;
+      border: 1px solid var(--dark-line);
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(241,243,246,0.8);
+      background: rgba(255,255,255,0.03);
+    }
+
+    .mock-title {
+      font-family: "Iowan Old Style", serif;
+      font-size: 28px;
+      line-height: 1.02;
+      color: #f5f7fb;
+      max-width: 560px;
+    }
+
+    .starter-row,
+    .toolbar-row,
+    .chip-row,
+    .trace-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .starter-box,
+    .toolbar-pill,
+    .chip,
+    .trace-pill,
+    .bubble {
+      border: 1px solid var(--dark-line);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      color: rgba(241,243,246,0.88);
+    }
+
+    .starter-row { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+
+    .starter-box {
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+      min-height: 74px;
+    }
+
+    .starter-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .chip-small {
+      padding: 4px 6px;
+      border-radius: 999px;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.05);
+      color: rgba(241,243,246,0.74);
+    }
+
+    .chip-small.ok { background: rgba(27,127,92,0.18); color: #98e2c6; }
+    .chip-small.no { background: rgba(176,91,80,0.18); color: #f1b2ab; }
+
+    .starter-copy { font-size: 12px; line-height: 1.3; }
+
+    .toolbar-pill,
+    .chip,
+    .trace-pill {
+      padding: 7px 9px;
+      font-size: 11px;
+    }
+
+    .composer {
+      margin-top: auto;
+      border: 1px solid var(--dark-line);
+      border-radius: 16px;
+      padding: 10px;
+      background: rgba(255,255,255,0.025);
+      display: grid;
+      gap: 8px;
+    }
+
+    .input {
+      height: 48px;
+      border: 1px solid var(--dark-line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: rgba(241,243,246,0.36);
+      font-size: 13px;
+    }
+
+    .send {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #f3f5f7;
+      color: #111317;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+
+    .chat {
+      display: grid;
+      gap: 8px;
+      min-height: 0;
+      align-content: start;
+    }
+
+    .bubble {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      width: fit-content;
+      max-width: 100%;
+    }
+
+    .bubble.user { justify-self: end; background: rgba(255,255,255,0.07); }
+    .bubble.assistant { background: rgba(255,255,255,0.04); }
+    .bubble.refusal { border-color: rgba(241, 178, 171, 0.24); color: #f0c4bf; }
+
+    .trace-pill.ok { color: #98e2c6; background: rgba(27,127,92,0.18); }
+    .trace-pill.mid { color: #f0cfad; background: rgba(183,110,43,0.18); }
+
+    .takeaway {
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 18px;
+    }
+
+    .footer-copy { font-size: 11px; }
+    .hint { font-size: 12px; }
+
+    @media (max-width: 1366px) {
+      .slide { padding: 62px 22px 18px; }
+      .slide-inner { width: min(100%, calc(100vw - 44px)); }
+      h1 { font-size: clamp(30px, 3.5vw, 46px); }
+      h2 { font-size: clamp(24px, 2.7vw, 36px); }
+      .grid-hero,
+      .grid-ui,
+      .grid-2 { grid-template-columns: 1fr; }
+      .metric-row,
+      .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+
+    @media (max-width: 900px) {
+      .deck-nav { display: none; }
+      .slide { padding: 64px 12px 14px; }
+      .slide-inner { width: min(100%, calc(100vw - 24px)); }
+      .metric-row,
+      .grid-3,
+      .example-grid,
+      .starter-row { grid-template-columns: 1fr; }
+      .footer { flex-direction: column; align-items: flex-start; }
+    }
+
+    @media (max-height: 760px) {
+      .slide {
+        padding: 54px 14px 12px;
+      }
+
+      .slide-inner {
+        width: min(1320px, calc((100vw - 28px) / 0.9));
+        transform: scale(0.9);
+        transform-origin: top center;
+        gap: 10px;
+      }
+
+      h1 { font-size: clamp(30px, 3.2vw, 44px); }
+      h2 { font-size: clamp(24px, 2.4vw, 34px); }
+      .subtitle { font-size: 13px; }
+      .statement { font-size: 21px; padding: 16px 18px; }
+      .panel { padding: 14px; }
+      .card { padding: 12px; }
+      .footer { display: none; }
+    }
+
+    @media (max-height: 720px) {
+      .slide-inner {
+        width: min(1380px, calc((100vw - 28px) / 0.84));
+        transform: scale(0.84);
+      }
+
+      .slide {
+        padding: 50px 12px 10px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .deck-track,
+      [data-reveal],
+      .hud-progress-fill,
+      .nav-dot { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck-shell">
+    <header class="deck-hud">
+      <div class="hud-box">
+        <span class="mark"></span>
+        <div class="hud-copy">
+          <strong>SmartTutor</strong>
+          <span>guardrails-first homework tutor</span>
+        </div>
+      </div>
+      <div class="hud-box">
+        <div class="mini">3-minute deck</div>
+        <div id="hudCounter">01 / 05</div>
+        <div class="hud-progress"><div class="hud-progress-fill" id="hudProgressFill"></div></div>
+      </div>
+    </header>
+
+    <nav class="deck-nav" id="deckNav" aria-label="Slide navigation"></nav>
+
+    <main class="deck-track" id="deckTrack">
+      <section class="slide is-active" data-title="Opening">
+        <div class="slide-inner">
+          <div class="slide-header">
+            <div class="title-wrap">
+              <div class="eyebrow" data-reveal style="--delay:0.02s;">Opening</div>
+              <h1 data-reveal style="--delay:0.08s;">The key contribution is not answer generation. It is correct refusal.</h1>
+              <p class="subtitle" data-reveal style="--delay:0.14s;">SmartTutor is a homework-only, multi-turn tutoring agent. The strongest part of the project is a layered guardrails design that defines scope, blocks unsafe behavior, and keeps the academic boundary visible.</p>
+            </div>
+            <div class="time" data-reveal style="--delay:0.18s;">~25s</div>
+          </div>
+
+          <div class="grid-hero">
+            <div class="panel" data-reveal style="--delay:0.22s;">
+              <div class="label">Core statement</div>
+              <div class="statement">Without guardrails, this would be another chatbot. With guardrails, it becomes a tutoring system with a clear academic boundary.</div>
+              <div class="metric-row">
+                <div class="metric"><div class="mini">Mandatory</div><div class="metric-value">2</div><div class="metric-copy">Math + History</div></div>
+                <div class="metric"><div class="mini">Optional</div><div class="metric-value">5</div><div class="metric-copy">Configurable subjects</div></div>
+                <div class="metric"><div class="mini">Modes</div><div class="metric-value">2</div><div class="metric-copy">Normal + Strict</div></div>
+                <div class="metric"><div class="mini">Strict stages</div><div class="metric-value">3</div><div class="metric-copy">Review → Generate → Audit</div></div>
+              </div>
+            </div>
+
+            <div class="panel" data-reveal style="--delay:0.28s;">
+              <div class="label">What to say in one breath</div>
+              <ul class="bullet-list">
+                <li><strong>First:</strong> the system is not open-domain; it is explicitly homework-only.</li>
+                <li><strong>Second:</strong> the boundary is enforced in code, not only in prompts.</li>
+                <li><strong>Third:</strong> the UI helps users understand that boundary before and after the first message.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="footer" data-reveal style="--delay:0.34s;">
+            <div class="footer-copy">Files · /core/guardrails.py · /core/response_handler.py · /core/search.py</div>
+            <div class="hint">Arrow keys / Space / Mouse wheel = full-slide navigation</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Architecture">
+        <div class="slide-inner">
+          <div class="slide-header">
+            <div class="title-wrap">
+              <div class="eyebrow" data-reveal style="--delay:0.02s;">Architecture</div>
+              <h2 data-reveal style="--delay:0.08s;">The project is easy to defend because the control points are explicit.</h2>
+              <p class="subtitle" data-reveal style="--delay:0.14s;">The UI, memory, local guardrails, search, and response handling are separated cleanly. That separation makes the system easier to explain, test, and extend.</p>
+            </div>
+            <div class="time" data-reveal style="--delay:0.18s;">~25s</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="panel" data-reveal style="--delay:0.22s;">
+              <div class="label">Runtime flow</div>
+              <div class="step-list">
+                <div class="step"><div class="step-num">1</div><div><div class="card-title">Web UI / CLI</div><div class="card-copy">Two entry points, one shared tutoring core.</div></div></div>
+                <div class="step"><div class="step-num">2</div><div><div class="card-title">ConversationManager</div><div class="card-copy">Tracks multi-turn history, truncation, and academic level.</div></div></div>
+                <div class="step"><div class="step-num">3</div><div><div class="card-title">Local guardrails</div><div class="card-copy">Quickly refuse unsafe or out-of-scope input before expensive model work.</div></div></div>
+                <div class="step"><div class="step-num">4</div><div><div class="card-title">Optional search</div><div class="card-copy">Search evidence is reviewed and sanitized before use.</div></div></div>
+                <div class="step"><div class="step-num">5</div><div><div class="card-title">ResponseHandler</div><div class="card-copy">Normal mode or Strict mode produces the final reply.</div></div></div>
+              </div>
+            </div>
+
+            <div class="panel" data-reveal style="--delay:0.28s;">
+              <div class="label">Why this matters</div>
+              <ul class="bullet-list">
+                <li><strong>Clear scope:</strong> all subject logic is centralized in settings and prompts.</li>
+                <li><strong>Reliable refusal:</strong> obvious bad requests can be blocked locally.</li>
+                <li><strong>Testable safety:</strong> guardrails, strict behavior, and search filtering all have unit tests.</li>
+                <li><strong>Good demo value:</strong> each stage maps to a story you can explain quickly during presentation.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="footer" data-reveal style="--delay:0.34s;">
+            <div class="footer-copy">Reference · /README.md · /config/settings.py</div>
+            <div class="hint">Transition: “Now the important part is how the boundary is enforced.”</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Local guardrails">
+        <div class="slide-inner">
+          <div class="slide-header">
+            <div class="title-wrap">
+              <div class="eyebrow" data-reveal style="--delay:0.02s;">Guardrails ①</div>
+              <h2 data-reveal style="--delay:0.08s;">The local prefilter is the most important engineering choice in the project.</h2>
+              <p class="subtitle" data-reveal style="--delay:0.14s;">It does more than keyword blocking. It normalizes obfuscated input, distinguishes academic intent from daily-life services, and protects the subject boundary before the model is called.</p>
+            </div>
+            <div class="time" data-reveal style="--delay:0.18s;">~40s</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="panel" data-reveal style="--delay:0.22s;">
+              <div class="label">What the prefilter does</div>
+              <div class="step-list">
+                <div class="step"><div class="step-num">1</div><div><div class="card-title">Decode first</div><div class="card-copy">Base64, ROT13, Morse, invisible characters, and light obfuscation are normalized before classification.</div></div></div>
+                <div class="step"><div class="step-num">2</div><div><div class="card-title">Catch jailbreak patterns</div><div class="card-copy">It blocks prompt leakage, roleplay scaffolds, and “ignore previous instructions” style attacks.</div></div></div>
+                <div class="step"><div class="step-num">3</div><div><div class="card-title">Enforce homework-only scope</div><div class="card-copy">Clearly disallowed subjects like biology or programming are refused.</div></div></div>
+                <div class="step"><div class="step-num">4</div><div><div class="card-title">Avoid false positives</div><div class="card-copy">A real conceptual question about climate should pass; a real travel-booking request should not.</div></div></div>
+              </div>
+            </div>
+
+            <div class="panel" data-reveal style="--delay:0.28s;">
+              <div class="label">Examples from the tests</div>
+              <div class="example-grid">
+                <div class="example"><div class="badge ok">Allow</div><div class="card-copy">“What is the difference between weather and climate?”</div></div>
+                <div class="example"><div class="badge no">Refuse</div><div class="card-copy">“What is the cheapest flight from Hong Kong to London next week?”</div></div>
+                <div class="example"><div class="badge ok">Allow</div><div class="card-copy">“How did travel routes shape the Silk Road?”</div></div>
+                <div class="example"><div class="badge no">Refuse</div><div class="card-copy">“Who was the first president of HKUST?”</div></div>
+                <div class="example"><div class="badge no">Refuse</div><div class="card-copy">Encoded prompt-exfiltration attempts after normalization.</div></div>
+                <div class="example"><div class="badge ok">Allow</div><div class="card-copy">“Please explain this in English.” as a formatting preference.</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="footer" data-reveal style="--delay:0.34s;">
+            <div class="footer-copy">Evidence · /tests/test_guardrails.py</div>
+            <div class="hint">Short line: “The prefilter tries to understand the real intent before saying yes or no.”</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Strict mode">
+        <div class="slide-inner">
+          <div class="slide-header">
+            <div class="title-wrap">
+              <div class="eyebrow" data-reveal style="--delay:0.02s;">Guardrails ②</div>
+              <h2 data-reveal style="--delay:0.08s;">Strict mode makes safety fail-closed: review the input, generate a draft, then audit the draft.</h2>
+              <p class="subtitle" data-reveal style="--delay:0.14s;">This is the second major guardrail layer. The model can help generate content, but it does not control the final decision on its own.</p>
+            </div>
+            <div class="time" data-reveal style="--delay:0.18s;">~40s</div>
+          </div>
+
+          <div class="grid-2">
+            <div class="panel" data-reveal style="--delay:0.22s;">
+              <div class="label">Strict-mode flow</div>
+              <div class="step-list">
+                <div class="step"><div class="step-num">0</div><div><div class="card-title">Local prefilter</div><div class="card-copy">Obvious bad cases are blocked immediately.</div></div></div>
+                <div class="step"><div class="step-num">1</div><div><div class="card-title">Input Review</div><div class="card-copy">A reviewer returns structured JSON with decision and summary.</div></div></div>
+                <div class="step"><div class="step-num">2</div><div><div class="card-title">Answer Generation</div><div class="card-copy">A candidate answer is created only after approval.</div></div></div>
+                <div class="step"><div class="step-num">3</div><div><div class="card-title">Final Audit</div><div class="card-copy">The draft must pass a final check before the user sees it.</div></div></div>
+              </div>
+            </div>
+
+            <div class="panel" data-reveal style="--delay:0.28s;">
+              <div class="label">Why it is reliable</div>
+              <div class="trace">
+                <div class="trace-card">
+                  <div class="trace-head"><div class="trace-title">Input Review</div><div class="trace-state ok">allow</div></div>
+                  <div class="trace-copy">Malformed reviewer output should not pass silently; tests require refusal.</div>
+                </div>
+                <div class="trace-card">
+                  <div class="trace-head"><div class="trace-title">Generation</div><div class="trace-state mid">retry</div></div>
+                  <div class="trace-copy">If the answer is empty or rejected, the system can retry with corrective feedback.</div>
+                </div>
+                <div class="trace-card">
+                  <div class="trace-head"><div class="trace-title">Search review</div><div class="trace-state ok">filter</div></div>
+                  <div class="trace-copy">Irrelevant or prompt-like external snippets are filtered before they reach the UI or the generator.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="footer" data-reveal style="--delay:0.34s;">
+            <div class="footer-copy">Evidence · /tests/test_response_handler.py · /tests/test_search.py</div>
+            <div class="hint">Short line: “Generation is useful here because it is fenced in by review and audit.”</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="UI & closing">
+        <div class="slide-inner">
+          <div class="slide-header">
+            <div class="title-wrap">
+              <div class="eyebrow" data-reveal style="--delay:0.02s;">UI + closing</div>
+              <h2 data-reveal style="--delay:0.08s;">The interface matters because it makes the boundary visible.</h2>
+              <p class="subtitle" data-reveal style="--delay:0.14s;">This mock UI is built directly inside the slide. The design goal is simple: users should see what is allowed, how the system is configured, and how refusal behaves inside the same tutoring flow.</p>
+            </div>
+            <div class="time" data-reveal style="--delay:0.18s;">~30s</div>
+          </div>
+
+          <div class="grid-ui">
+            <div class="mock" data-reveal style="--delay:0.22s;">
+              <div class="label" style="color:rgba(241,243,246,0.56);">Re-created SmartTutor UI</div>
+              <div class="mock-shell">
+                <div class="mock-top">
+                  <div class="mock-brand"><strong>SmartTutor</strong><span>CSIT5900 homework assistant</span></div>
+                  <div class="ghost">New chat</div>
+                </div>
+                <div class="mock-title">What can I help with today?</div>
+                <div class="starter-row">
+                  <div class="starter-box">
+                    <div class="starter-head"><span class="chip-small">Math</span><span class="chip-small ok">In scope</span></div>
+                    <div class="starter-copy">Differentiate x³eˣ and explain the rules.</div>
+                  </div>
+                  <div class="starter-box">
+                    <div class="starter-head"><span class="chip-small">History</span><span class="chip-small ok">In scope</span></div>
+                    <div class="starter-copy">Compare the French and Haitian Revolutions.</div>
+                  </div>
+                  <div class="starter-box">
+                    <div class="starter-head"><span class="chip-small">Travel</span><span class="chip-small no">Will refuse</span></div>
+                    <div class="starter-copy">Plan a food tour in Osaka with hotel suggestions.</div>
+                  </div>
+                </div>
+                <div class="composer">
+                  <div class="toolbar-row">
+                    <div class="toolbar-pill">Normal</div>
+                    <div class="toolbar-pill">Auto</div>
+                    <div class="toolbar-pill">All</div>
+                  </div>
+                  <div class="input"><span>Message SmartTutor...</span><span class="send">↑</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid-3" data-reveal style="--delay:0.28s; grid-template-columns:1fr;">
+              <div class="mock">
+                <div class="label" style="color:rgba(241,243,246,0.56);">Same conversation</div>
+                <div class="mock-shell">
+                  <div class="chat">
+                    <div class="bubble assistant">For a right triangle, <strong>a² + b² = c²</strong>.</div>
+                    <div class="trace-row">
+                      <div class="trace-pill ok">Input review · allow</div>
+                      <div class="trace-pill mid">Generation · draft</div>
+                      <div class="trace-pill ok">Audit · approve</div>
+                    </div>
+                    <div class="bubble refusal">Sorry, that request moves outside the homework scope I am allowed to support.</div>
+                  </div>
+                </div>
+              </div>
+              <div class="takeaway">
+                <div class="label">Final takeaway</div>
+                <div class="takeaway-title">This project is strongest when presented as a boundary system.</div>
+                <div class="takeaway-copy">It answers the right question, refuses the wrong one, and exposes that decision in a way a user can understand.</div>
+              </div>
+              <div class="takeaway">
+                <div class="label">Stable live demo route</div>
+                <ul class="short-list">
+                  <li><strong>1.</strong> Ask one safe homework question.</li>
+                  <li><strong>2.</strong> Ask one disguised out-of-scope request.</li>
+                  <li><strong>3.</strong> Ask for a summary or practice follow-up.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="footer" data-reveal style="--delay:0.34s;">
+            <div class="footer-copy">File · /Users/lijinchuan/Documents/HKUST/CSIT5900-AI/agent-project/slides/index.html</div>
+            <div class="hint">Final line: “The project is not just about generating answers; it is about enforcing the right boundary.”</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const deckTrack = document.getElementById('deckTrack');
+    const hudCounter = document.getElementById('hudCounter');
+    const hudProgressFill = document.getElementById('hudProgressFill');
+    const deckNav = document.getElementById('deckNav');
+
+    let currentIndex = 0;
+    let lockUntil = 0;
+    let wheelAccumulator = 0;
+    let touchStartY = null;
+
+    function clampIndex(index) {
+      return Math.max(0, Math.min(slides.length - 1, index));
+    }
+
+    function updateHud() {
+      hudCounter.textContent = `${String(currentIndex + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+      hudProgressFill.style.width = `${((currentIndex + 1) / slides.length) * 100}%`;
+    }
+
+    function updateNav() {
+      deckNav.querySelectorAll('.nav-dot').forEach((dot, index) => dot.classList.toggle('is-active', index === currentIndex));
+    }
+
+    function activateSlide(index) {
+      currentIndex = clampIndex(index);
+      deckTrack.style.transform = `translate3d(0, -${currentIndex * 100}vh, 0)`;
+      slides.forEach((slide, idx) => slide.classList.toggle('is-active', idx === currentIndex));
+      updateHud();
+      updateNav();
+    }
+
+    function goTo(index) {
+      const nextIndex = clampIndex(index);
+      if (nextIndex === currentIndex) return;
+      lockUntil = Date.now() + 760;
+      wheelAccumulator = 0;
+      activateSlide(nextIndex);
+    }
+
+    function navigate(direction) {
+      if (Date.now() < lockUntil) return;
+      const nextIndex = clampIndex(currentIndex + direction);
+      if (nextIndex === currentIndex) return;
+      goTo(nextIndex);
+    }
+
+    slides.forEach((slide, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nav-dot' + (index === 0 ? ' is-active' : '');
+      button.setAttribute('aria-label', `Go to slide ${index + 1}`);
+      button.innerHTML = `<span class="nav-label">${String(index + 1).padStart(2, '0')} · ${slide.dataset.title || `Slide ${index + 1}`}</span>`;
+      button.addEventListener('click', () => goTo(index));
+      deckNav.appendChild(button);
+    });
+
+    window.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      if (Date.now() < lockUntil) return;
+      wheelAccumulator += event.deltaY;
+      if (Math.abs(wheelAccumulator) > 70) navigate(wheelAccumulator > 0 ? 1 : -1);
+    }, { passive: false });
+
+    window.addEventListener('keydown', (event) => {
+      if (['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) || (event.key === ' ' && !event.shiftKey)) {
+        event.preventDefault();
+        navigate(1);
+      } else if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(event.key) || (event.key === ' ' && event.shiftKey)) {
+        event.preventDefault();
+        navigate(-1);
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        goTo(0);
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        goTo(slides.length - 1);
+      }
+    });
+
+    window.addEventListener('touchstart', (event) => { touchStartY = event.touches[0].clientY; }, { passive: true });
+    window.addEventListener('touchend', (event) => {
+      if (touchStartY == null) return;
+      const delta = touchStartY - event.changedTouches[0].clientY;
+      if (Math.abs(delta) > 50) navigate(delta > 0 ? 1 : -1);
+      touchStartY = null;
+    }, { passive: true });
+
+    activateSlide(0);
+  </script>
+</body>
+</html>
